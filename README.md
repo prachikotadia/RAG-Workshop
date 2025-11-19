@@ -36,6 +36,16 @@ RAG Workspace is a full-stack application that combines document management, sem
 - **Document Q&A**: Quickly find information in large document collections
 - **Image Analysis**: Ask questions about uploaded images and GIFs
 
+### Screenshots
+
+<div align="center">
+  <img src="assets/screenshots/documents-page.png" alt="Documents Page" width="800"/>
+  <p><em>Documents Page - Upload and manage your documents</em></p>
+  
+  <img src="assets/screenshots/chat-page.png" alt="Chat Page" width="800"/>
+  <p><em>Chat Interface - Ask questions about your documents</em></p>
+</div>
+
 ---
 
 ## ✨ Features
