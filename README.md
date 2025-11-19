@@ -1,4 +1,4 @@
-# Prachi RAG Workspace
+# RAG Workspace
 
 > **A production-ready Retrieval-Augmented Generation (RAG) platform** that enables users to upload documents, index them into a vector store, and interact with an AI assistant that answers questions grounded entirely in their private knowledge base.
 
@@ -6,28 +6,61 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104-green.svg)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-18.2-blue.svg)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.2-blue.svg)](https://www.typescriptlang.org/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## 📋 Table of Contents
+
+- [Overview](#-overview)
+- [Features](#-features)
+- [Architecture](#-architecture)
+- [Quick Start](#-quick-start)
+- [Configuration](#-configuration)
+- [API Documentation](#-api-documentation)
+- [Project Structure](#-project-structure)
+- [Tech Stack](#-tech-stack)
+- [Deployment](#-deployment)
+- [Contributing](#-contributing)
 
 ---
 
 ## 🎯 Overview
 
-Prachi RAG Workspace is an end-to-end RAG platform that combines document management, vector search, and conversational AI to create a personal knowledge assistant. Users can securely upload documents (PDFs, text files, markdown, images), have them automatically indexed, and then ask questions that are answered using only their uploaded content with full citation tracking.
+RAG Workspace is a full-stack application that combines document management, semantic search, and conversational AI. Users can securely upload documents (PDFs, text files, markdown, images), have them automatically processed and indexed, and then ask questions that are answered using only their uploaded content with full citation tracking.
 
-### Key Features
+### Use Cases
 
-- **📄 Multi-format Document Support**: PDF, TXT, MD, and images (JPG, PNG, GIF, etc.)
-- **🔍 Intelligent Vector Search**: FAISS-based semantic search with per-user isolation
+- **Personal Knowledge Base**: Upload your documents and ask questions about them
+- **Research Assistant**: Index research papers and get AI-powered answers
+- **Document Q&A**: Quickly find information in large document collections
+- **Image Analysis**: Ask questions about uploaded images and GIFs
+
+---
+
+## ✨ Features
+
+### Core Capabilities
+
+- **📄 Multi-format Document Support**: PDF, TXT, MD, and images (JPG, PNG, GIF)
+- **🔍 Semantic Vector Search**: FAISS-based similarity search with per-user isolation
 - **💬 Conversational AI**: RAG-powered chat with conversation history
 - **📸 Image Analysis**: Vision AI for image understanding and Q&A
 - **🔐 Secure & Isolated**: JWT authentication with complete user data isolation
-- **🎨 Modern UI**: Responsive React frontend with dark mode support
+- **🎨 Modern UI**: Responsive React frontend with dark mode and glassmorphism design
 - **🔌 Provider Flexibility**: Support for OpenAI, Groq, HuggingFace, and local models
+
+### Technical Highlights
+
+- **Per-user Vector Indexes**: Complete data isolation with separate FAISS indexes
+- **Citation Tracking**: Every answer includes source document references
+- **Multi-model Fallback**: Automatic fallback chain for image analysis
+- **Real-time Status Updates**: Document processing status tracking
+- **Mobile Responsive**: Fully functional on desktop, tablet, and mobile devices
 
 ---
 
 ## 🏗️ Architecture
-
-The system is built with a modular, scalable architecture:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -61,8 +94,8 @@ The system is built with a modular, scalable architecture:
 │  ┌──────────────────────────────────────────────┐       │
 │  │         Vision Analyzer (Images)             │       │
 │  │  • OpenAI Vision API                         │       │
-│  │  • BLIP-2 Captioning (local)                 │       │
-│  │  • CLIP Embeddings                           │       │
+│  │  • BLIP-2 Captioning (local)                │       │
+│  │  • CLIP Embeddings                          │       │
 │  └──────────────────────────────────────────────┘       │
 └───────────────────────┬─────────────────────────────────┘
                         │
@@ -75,13 +108,15 @@ The system is built with a modular, scalable architecture:
 └───────────────────────────────────────────────────────┘
 ```
 
-### Core Components
+### RAG Pipeline Flow
 
-1. **API & Auth Layer**: FastAPI with JWT authentication, CORS, middleware
-2. **RAG Engine**: Embedding → Vector Search → Context Building → LLM Generation
-3. **Document Pipeline**: Upload → Parse → Chunk → Embed → Index
-4. **Vector Store**: Per-user FAISS indexes with disk persistence
-5. **Vision AI**: Multi-model image analysis with fallback chain
+1. **User Question** → Embed query using OpenAI/HuggingFace
+2. **Vector Search** → Search user's FAISS index for top-k similar chunks
+3. **Retrieve Context** → Fetch full chunk text with document metadata
+4. **Image Analysis** (if applicable) → Analyze images using Vision API or BLIP-2
+5. **Build Context** → Combine chunks with citations and image analysis
+6. **Generate Answer** → Call LLM (OpenAI/Groq/Local) with context and history
+7. **Store & Return** → Save messages and return answer with citations
 
 ---
 
@@ -90,7 +125,7 @@ The system is built with a modular, scalable architecture:
 ### Prerequisites
 
 - **Python 3.11+**
-- **Node.js 18+** (for frontend)
+- **Node.js 18+**
 - **PostgreSQL 15+** (or Docker)
 - **OpenAI API Key** (or alternative LLM provider)
 
@@ -99,8 +134,8 @@ The system is built with a modular, scalable architecture:
 #### 1. Clone Repository
 
 ```bash
-git clone <repository-url>
-cd rag_workspace
+git clone https://github.com/prachikotadia/RAG-Workshop.git
+cd RAG-Workshop
 ```
 
 #### 2. Backend Setup
@@ -115,7 +150,7 @@ pip install -r requirements.txt
 
 # Configure environment
 cp .env.example .env
-# Edit .env and add your API keys (see Configuration section)
+# Edit .env and add your API keys
 ```
 
 #### 3. Database Setup
@@ -127,20 +162,13 @@ docker-compose up -d db
 
 **Option B: Local PostgreSQL**
 ```bash
-# Create database
 createdb ragworkspace
-
 # Update DATABASE_URL in .env
-# DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/ragworkspace
 ```
 
 **Initialize Schema:**
 ```bash
-# Using Alembic (recommended)
 alembic upgrade head
-
-# Or create tables directly (dev only)
-python -c "from app.db.base import engine, Base; from app.db import models; Base.metadata.create_all(bind=engine)"
 ```
 
 #### 4. Frontend Setup
@@ -148,10 +176,6 @@ python -c "from app.db.base import engine, Base; from app.db import models; Base
 ```bash
 cd frontend
 npm install
-
-# Configure API URL (optional, defaults to http://127.0.0.1:8000)
-# Create frontend/.env if needed:
-# VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 #### 5. Start Services
@@ -173,24 +197,11 @@ npm run dev
 - Backend API: http://127.0.0.1:8000
 - API Docs: http://127.0.0.1:8000/docs
 
-### Docker Deployment
-
-```bash
-# Start all services (backend + database)
-docker-compose up -d
-
-# View logs
-docker-compose logs -f app
-
-# Stop services
-docker-compose down
-```
-
 ---
 
 ## ⚙️ Configuration
 
-Configuration is managed via environment variables. Create a `.env` file in the project root:
+Create a `.env` file in the project root with the following variables:
 
 ### Required Variables
 
@@ -201,38 +212,34 @@ DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/ragworkspace
 # Security
 JWT_SECRET_KEY=your-secret-key-change-in-production
 JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=1440  # 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES=1440
 
 # LLM Provider (at least one required)
-OPENAI_API_KEY=sk-...  # For OpenAI embeddings + LLM + vision
+OPENAI_API_KEY=sk-...
 # OR
-GROQ_API_KEY=...       # For Groq/Llama models
-LLM_PROVIDER=openai    # openai, groq, or local
-LLM_MODEL=gpt-4o-mini  # OpenAI model name
+GROQ_API_KEY=...
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4o-mini
 ```
 
 ### Optional Configuration
 
 ```bash
 # Embeddings
-EMBEDDINGS_PROVIDER=openai  # openai or huggingface
+EMBEDDINGS_PROVIDER=openai
 EMBEDDINGS_MODEL=text-embedding-3-small
-HUGGINGFACE_MODEL=sentence-transformers/all-MiniLM-L6-v2
 
 # Vector Store
-VECTORSTORE_PROVIDER=faiss  # faiss, pinecone, or chroma
+VECTORSTORE_PROVIDER=faiss
 VECTORSTORE_BASE_DIR=data/vectorstores
 
 # Storage
-STORAGE_PROVIDER=filesystem  # filesystem or s3
+STORAGE_PROVIDER=filesystem
 STORAGE_BASE_DIR=storage
 
-# Image Analysis
-ENABLE_CAPTION_MODEL=false  # Enable local BLIP-2 (slow on CPU)
-
 # Application
-ENVIRONMENT=dev  # dev, staging, or prod
-CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+ENVIRONMENT=dev
+CORS_ORIGINS=http://localhost:3000
 MAX_FILE_SIZE_MB=50
 ```
 
@@ -277,90 +284,39 @@ See `.env.example` for complete configuration options.
 
 ---
 
-## 🔄 RAG Pipeline Flow
-
-The RAG (Retrieval-Augmented Generation) pipeline processes user questions as follows:
+## 📁 Project Structure
 
 ```
-User Question
-    │
-    ▼
-1. Embed Query
-   • Convert question to embedding vector
-   • Provider: OpenAI or HuggingFace
-    │
-    ▼
-2. Vector Search
-   • Search user's FAISS index
-   • Return top-k similar chunks (default: k=10)
-   • Distance metric: L2 (Euclidean)
-    │
-    ▼
-3. Retrieve Chunks
-   • Fetch full chunk text from PostgreSQL
-   • Filter by user_id (security)
-   • Join with Document table for titles
-    │
-    ▼
-4. Build Context
-   • Combine chunks with citations
-   • Sort by relevance (score)
-   • Truncate to max_chars (default: 4000)
-   • Special handling for image chunks
-    │
-    ▼
-5. Image Analysis (if image question detected)
-   • Detect image-related keywords
-   • analyze_image() with fallback chain:
-     → OpenAI Vision API (primary)
-     → BLIP-2 Captioning (fallback)
-     → Metadata extraction (last resort)
-   • Enhance context with vision analysis
-    │
-    ▼
-6. Fetch Chat History
-   • Get recent messages (last 10)
-   • Exclude current question (avoid duplication)
-   • Format as message dicts
-    │
-    ▼
-7. Build LLM Messages
-   • System prompt (instructions)
-   • Context message (retrieved chunks)
-   • History messages (conversation)
-   • Current user question
-    │
-    ▼
-8. Generate Answer
-   • Call LLM (OpenAI/Groq/Local)
-   • Temperature: 0.8, top_p: 0.9
-   • Return answer text
-    │
-    ▼
-9. Store & Return
-   • Save user message
-   • Save assistant message with citations
-   • Return (answer, citations, analysis_info)
-```
-
----
-
-## 🧪 Testing
-
-Run the test suite:
-
-```bash
-# Activate virtual environment
-source venv/bin/activate
-
-# Run all tests
-pytest tests/
-
-# Run specific test file
-pytest tests/test_rag_chain.py
-
-# Run with coverage
-pytest --cov=app tests/
+rag_workspace/
+├── app/                      # Backend application
+│   ├── main.py              # FastAPI app initialization
+│   ├── config.py            # Settings management
+│   ├── db/                  # Database layer (models, schemas, base)
+│   ├── auth/                # Authentication (routes, service, JWT)
+│   ├── documents/           # Document management (upload, parse, chunk)
+│   ├── embeddings/          # Embedding providers (OpenAI, HuggingFace)
+│   ├── vectorstore/         # Vector database (FAISS, Pinecone, Chroma)
+│   ├── rag/                 # RAG pipeline (chain, context, prompts)
+│   ├── chat/                # Chat system (sessions, messages)
+│   ├── storage/             # File storage (filesystem, S3)
+│   ├── utils/               # Utilities (middleware, security, retry)
+│   └── telemetry/           # Observability (logging)
+│
+├── frontend/                # React frontend
+│   ├── src/
+│   │   ├── api/            # API client and endpoints
+│   │   ├── components/     # React components (auth, chat, documents, layout)
+│   │   ├── pages/          # Page-level components
+│   │   ├── hooks/          # Custom React hooks
+│   │   ├── contexts/       # React contexts (theme)
+│   │   └── styles/         # Global styles
+│   └── package.json
+│
+├── tests/                   # Test suite
+├── alembic/                 # Database migrations
+├── docker-compose.yml       # Docker services
+├── Dockerfile              # Backend container
+└── requirements.txt        # Python dependencies
 ```
 
 ---
@@ -380,9 +336,7 @@ pytest --cov=app tests/
 | **LLM** | OpenAI / Groq / Local | Language model |
 | **Vision** | OpenAI Vision / BLIP-2 | Image analysis |
 | **Auth** | JWT (python-jose) | Token-based authentication |
-| **Password** | bcrypt (passlib) | Secure password hashing |
 | **Migrations** | Alembic | Database schema management |
-| **Server** | Uvicorn / Gunicorn | ASGI/WSGI server |
 
 ### Frontend
 
@@ -393,7 +347,6 @@ pytest --cov=app tests/
 | **Build Tool** | Vite 5 | Fast dev server & bundler |
 | **Routing** | React Router 6 | Client-side routing |
 | **Styling** | Tailwind CSS 3.3 | Utility-first CSS |
-| **State** | React Hooks | Component state management |
 
 ### Infrastructure
 
@@ -403,219 +356,20 @@ pytest --cov=app tests/
 
 ---
 
-## 📁 Project Structure
-
-```
-rag_workspace/
-├── app/                      # Backend application
-│   ├── main.py              # FastAPI app initialization
-│   ├── config.py            # Settings management
-│   │
-│   ├── db/                  # Database layer
-│   │   ├── base.py          # SQLAlchemy engine & session
-│   │   ├── models.py        # SQLAlchemy models
-│   │   └── schemas.py       # Pydantic schemas
-│   │
-│   ├── auth/                # Authentication
-│   │   ├── routes.py        # Auth endpoints
-│   │   ├── service.py       # Auth business logic
-│   │   ├── jwt.py           # JWT token handling
-│   │   └── dependencies.py # get_current_user dependency
-│   │
-│   ├── documents/           # Document management
-│   │   ├── routes.py        # Document endpoints
-│   │   ├── service.py       # Document processing pipeline
-│   │   ├── parsers.py       # PDF/TXT/MD/Image parsing
-│   │   └── chunking.py      # Text chunking utilities
-│   │
-│   ├── embeddings/          # Embedding providers
-│   │   ├── provider.py      # Abstract base + OpenAI
-│   │   ├── huggingface.py   # HuggingFace provider
-│   │   └── image_provider.py # CLIP image embeddings
-│   │
-│   ├── vectorstore/         # Vector database
-│   │   ├── faiss_store.py   # FAISS implementation
-│   │   ├── pinecone_store.py # Pinecone (optional)
-│   │   └── chroma_store.py  # ChromaDB (optional)
-│   │
-│   ├── rag/                 # RAG pipeline
-│   │   ├── chain.py         # Main RAG orchestrator
-│   │   ├── context_builder.py # Context & citation building
-│   │   ├── prompts.py       # LLM prompt templates
-│   │   ├── image_analyzer.py # Image analysis
-│   │   ├── vision_analyzer.py # OpenAI Vision API
-│   │   ├── groq_client.py   # Groq/Llama client
-│   │   └── hallucination_guard.py # Response validation
-│   │
-│   ├── chat/                # Chat system
-│   │   ├── routes.py        # Chat endpoints
-│   │   ├── service.py       # Chat business logic
-│   │   └── history.py       # Message history retrieval
-│   │
-│   ├── storage/             # File storage
-│   │   └── s3_storage.py    # AWS S3 storage (optional)
-│   │
-│   ├── utils/               # Utilities
-│   │   ├── middleware.py    # Request ID, logging
-│   │   ├── security.py      # Password hashing
-│   │   ├── retry.py         # Retry logic
-│   │   └── validation.py    # Input validation
-│   │
-│   └── telemetry/           # Observability
-│       └── logging.py       # Logging configuration
-│
-├── frontend/                # React frontend
-│   ├── src/
-│   │   ├── api/            # API client and endpoint definitions
-│   │   │   ├── client.ts   # HTTP client with JWT handling
-│   │   │   ├── auth.ts     # Authentication endpoints
-│   │   │   ├── documents.ts # Document endpoints
-│   │   │   └── chat.ts     # Chat endpoints
-│   │   ├── components/     # React components
-│   │   │   ├── auth/      # Login/Signup forms
-│   │   │   ├── chat/      # Chat interface components
-│   │   │   ├── documents/ # Document management UI
-│   │   │   ├── layout/    # Navbar, Sidebar, ThemeToggle
-│   │   │   └── common/    # Shared components (modals, spinners)
-│   │   ├── pages/          # Page-level components
-│   │   │   ├── AuthPage.tsx
-│   │   │   ├── DocumentsPage.tsx
-│   │   │   ├── ChatPage.tsx
-│   │   │   └── NotFoundPage.tsx
-│   │   ├── hooks/          # Custom React hooks
-│   │   │   └── useAuth.ts  # Authentication state management
-│   │   ├── contexts/       # React contexts
-│   │   │   └── ThemeContext.tsx # Dark/light theme
-│   │   ├── styles/         # Global styles
-│   │   │   └── globals.css # Tailwind + custom utilities
-│   │   ├── App.tsx         # Main app component
-│   │   ├── main.tsx        # Entry point
-│   │   └── router.tsx      # Route configuration
-│   ├── package.json
-│   └── vite.config.ts
-│
-├── tests/                   # Test suite
-│   ├── conftest.py         # Pytest configuration
-│   ├── test_auth_flow.py
-│   ├── test_chunking.py
-│   └── test_rag_chain.py
-│
-├── alembic/                 # Database migrations
-├── data/                    # Vector store data
-├── storage/                 # Uploaded files
-├── docker-compose.yml       # Docker services
-├── Dockerfile              # Backend container
-├── requirements.txt        # Python dependencies
-└── README.md               # This file
-```
-
----
-
-## 🔐 Security Features
-
-- **JWT Authentication**: Stateless token-based auth with configurable expiration
-- **Password Hashing**: bcrypt with 12 rounds (cost factor)
-- **User Isolation**: All queries filtered by user_id, per-user vector indexes
-- **Input Validation**: Pydantic schemas for all API inputs
-- **CORS Configuration**: Configurable allowed origins
-- **File Upload Security**: Extension whitelist, size limits, safe filename generation
-- **SQL Injection Prevention**: SQLAlchemy ORM with parameterized queries
-
----
-
-## 🎨 Frontend Architecture
-
-### Component Structure
-
-The frontend is built with React 18 and TypeScript, organized into clear layers:
-
-- **API Layer** (`src/api/`): Centralized HTTP client with automatic JWT injection
-- **Components** (`src/components/`): Reusable UI components organized by feature
-- **Pages** (`src/pages/`): Top-level page components
-- **Hooks** (`src/hooks/`): Custom React hooks for state management
-- **Contexts** (`src/contexts/`): React contexts for global state (theme)
-
-### State Management
-
-- **Local State**: `useState` for component-level state
-- **Global Auth**: `useAuth` hook with localStorage persistence
-- **Theme**: `ThemeContext` for dark/light mode
-- **No Redux**: Simple state management without external libraries
-
-### API Integration
-
-- **Centralized Client**: `api/client.ts` handles all HTTP requests
-- **Automatic Auth**: JWT tokens injected via Authorization header
-- **Error Handling**: Automatic 401 redirect to login
-- **Type Safety**: TypeScript interfaces for all API responses
-
-### Routing
-
-- **Protected Routes**: `ProtectedRoute` component guards authenticated pages
-- **Public Routes**: `/login` accessible without auth
-- **Default Redirect**: `/` redirects to `/documents`
-
-### Styling
-
-- **Tailwind CSS** with custom utility classes
-- **Dark Mode**: Class-based (`darkMode: 'class'`)
-- **Custom Utilities**: `.glass`, `.glass-dark`, `.hover-lift`, `.hover-glow`
-- **Responsive**: Mobile-first design with breakpoints
-
-### Frontend Features
-
-- **Responsive Design**: Mobile-first with Tailwind CSS
-- **Dark Mode**: Full dark/light theme support
-- **Glassmorphism UI**: Modern glass-effect design
-- **Real-time Updates**: Document status tracking
-- **Chat Interface**: Message history with citations
-- **File Upload**: Drag-and-drop with progress
-- **Error Handling**: User-friendly error messages
-- **Loading States**: Visual feedback for async operations
-
-### Frontend Development
-
-**Available Scripts:**
-- `npm run dev` - Start development server (port 3000)
-- `npm run build` - Build for production
-- `npm run preview` - Preview production build
-- `npm run lint` - Run ESLint
-
-**Development Server:**
-- Port: 3000 (configurable in `vite.config.ts`)
-- HMR: Hot Module Replacement enabled
-- Proxy: `/api` requests proxied to backend (port 8000)
-
-**Environment Variables:**
-```bash
-# frontend/.env (optional)
-VITE_API_BASE_URL=http://127.0.0.1:8000
-```
-
-**Browser Support:**
-- Modern browsers (Chrome, Firefox, Safari, Edge)
-- ES2020+ features
-- CSS Grid and Flexbox
-- LocalStorage for token persistence
-
----
-
 ## 🚢 Deployment
 
 ### Production Checklist
 
 - [ ] Set `ENVIRONMENT=prod` in `.env`
 - [ ] Use strong `JWT_SECRET_KEY` (random, 32+ characters)
-- [ ] Configure `CORS_ORIGINS` to specific domains (not `*`)
+- [ ] Configure `CORS_ORIGINS` to specific domains
 - [ ] Use HTTPS/TLS for all connections
 - [ ] Set up database backups
 - [ ] Configure logging aggregation
 - [ ] Use managed PostgreSQL (RDS, Cloud SQL, etc.)
-- [ ] Consider managed vector database (Pinecone) for scale
 - [ ] Set up monitoring and alerting
 - [ ] Use Gunicorn with multiple workers
 - [ ] Configure reverse proxy (Nginx, Traefik)
-- [ ] Set up CI/CD pipeline
 
 ### Docker Production
 
@@ -634,13 +388,55 @@ docker run -d \
   rag-workspace:latest
 ```
 
+### Docker Compose
+
+```bash
+# Start all services (backend + database)
+docker-compose up -d
+
+# View logs
+docker-compose logs -f app
+
+# Stop services
+docker-compose down
+```
+
+---
+
+## 🔐 Security Features
+
+- **JWT Authentication**: Stateless token-based auth with configurable expiration
+- **Password Hashing**: bcrypt with 12 rounds
+- **User Isolation**: All queries filtered by user_id, per-user vector indexes
+- **Input Validation**: Pydantic schemas for all API inputs
+- **CORS Configuration**: Configurable allowed origins
+- **File Upload Security**: Extension whitelist, size limits, safe filename generation
+- **SQL Injection Prevention**: SQLAlchemy ORM with parameterized queries
+
+---
+
+## 🧪 Testing
+
+```bash
+# Activate virtual environment
+source venv/bin/activate
+
+# Run all tests
+pytest tests/
+
+# Run specific test file
+pytest tests/test_rag_chain.py
+
+# Run with coverage
+pytest --cov=app tests/
+```
+
 ---
 
 ## 📊 Performance Considerations
 
-- **Vector Search**: FAISS IndexFlatL2 for exact search (O(n*d) complexity)
+- **Vector Search**: FAISS IndexFlatL2 for exact search
 - **Embedding Batching**: Batch processing for multiple documents
-- **Image Processing**: Timeouts configured (60s upload, 30s chat)
 - **Database Indexing**: Indexed columns for fast queries
 - **Connection Pooling**: SQLAlchemy connection pool
 - **Caching**: LLM client and embedding provider singletons
@@ -656,16 +452,23 @@ docker run -d \
 
 ## 🤝 Contributing
 
-This is a personal project, but contributions are welcome:
+Contributions are welcome! Please follow these steps:
 
 1. Fork the repository
-2. Create a feature branch
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Make your changes
-4. Add tests
-5. Submit a pull request
+4. Add tests if applicable
+5. Commit your changes (`git commit -m 'Add amazing feature'`)
+6. Push to the branch (`git push origin feature/amazing-feature`)
+7. Open a Pull Request
 
 ---
 
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+---
 
 ## 🙏 Acknowledgments
 
@@ -679,6 +482,8 @@ This is a personal project, but contributions are welcome:
 
 ## 📞 Support
 
-For issues, questions, or contributions, please open an issue on the repository.
+For issues, questions, or contributions, please open an issue on the [GitHub repository](https://github.com/prachikotadia/RAG-Workshop).
 
+---
 
+**Built with ❤️ using FastAPI, React, and modern AI technologies.**
