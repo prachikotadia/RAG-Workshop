@@ -1,0 +1,2 @@
+"""Admin and statistics endpoints."""
+
