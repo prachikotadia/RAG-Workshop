@@ -38,13 +38,12 @@ RAG Workspace is a full-stack application that combines document management, sem
 
 ### Screenshots
 
-<div align="center">
-  <img src="assets/screenshots/documents-page.png" alt="Documents Page" width="800"/>
-  <p><em>Documents Page - Upload and manage your documents</em></p>
+![Document Upload Page Screenshot](assets/screenshots/document_page.png)
+
+![Chat Upload Page Screenshot](assets/screenshots/Chat_upload.png)
+
   
-  <img src="assets/screenshots/chat-page.png" alt="Chat Page" width="800"/>
-  <p><em>Chat Interface - Ask questions about your documents</em></p>
-</div>
+assets/screenshots/Screenshot 2025-11-19 at 8.14.11 AM.png
 
 ---
 
