@@ -461,7 +461,7 @@ pytest --cov=app tests/
 
 ## 🤝 Contributing
 
-Contributions are welcome![Chat Interface Screenshot]Please follow these steps:
+Contributions are welcome! Please follow these steps:
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
