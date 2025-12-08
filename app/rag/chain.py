@@ -93,9 +93,17 @@ class OpenAILlmClient(LlmClient):
             return response.choices[0].message.content
         
         try:
-            return await retry_async(_generate, max_retries=3, exceptions=(Exception,))
+            # Add timeout to prevent hanging
+            import asyncio
+            return await asyncio.wait_for(
+                retry_async(_generate, max_retries=2, exceptions=(Exception,)),  # Reduced retries
+                timeout=30.0  # 30 second timeout for LLM generation
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"LLM generation timed out after 30 seconds")
+            raise TimeoutError("LLM generation timed out")
         except Exception as e:
-            logger.error(f"Error generating LLM response: {e}")
+            logger.error(f"Error generating LLM response: {e}", exc_info=True)
             raise
 
 
@@ -242,9 +250,13 @@ class RagChain:
                             
                             if file_path and file_path.exists():
                                 try:
-                                    # Use lightweight comprehensive analysis
+                                    # Use lightweight comprehensive analysis with timeout
                                     logger.info(f"Performing lightweight image analysis for {doc.title}")
-                                    deep_analysis = await scan_image_comprehensively(file_path)
+                                    import asyncio
+                                    deep_analysis = await asyncio.wait_for(
+                                        scan_image_comprehensively(file_path),
+                                        timeout=8.0  # Fast timeout for image analysis
+                                    )
                                     
                                     # Build comprehensive analysis text
                                     analysis_text = f"""=== Image Analysis: {doc.title} ===
@@ -286,7 +298,11 @@ CLIP Embedding: Generated ({deep_analysis.get('clip_embedding_dim', 0)} dimensio
                         if image_analyses:
                             context = "\n\n".join(image_analyses)
                             messages = build_messages(context=context, history=[], question=question)
-                            answer = await self._llm.generate(messages)
+                            import asyncio
+                            answer = await asyncio.wait_for(
+                                self._llm.generate(messages),
+                                timeout=30.0  # 30 second timeout
+                            )
                             # Return analysis info
                             analysis_info = {
                                 "image_analyses": [{"analysis_text": analysis} for analysis in image_analyses],
@@ -307,13 +323,25 @@ CLIP Embedding: Generated ({deep_analysis.get('clip_embedding_dim', 0)} dimensio
             logger.info(f"Calling LLM without document context for user {user.id}, session {session.id}")
             
             try:
-                answer = await self._llm.generate(messages)
+                import asyncio
+                # Add timeout to LLM generation
+                answer = await asyncio.wait_for(
+                    self._llm.generate(messages),
+                    timeout=30.0  # 30 second timeout
+                )
                 logger.info(f"Generated answer ({len(answer)} chars) without document context for user {user.id}")
                 # Add a note that this answer wasn't based on documents
                 if not answer.strip().endswith(".") and not answer.strip().endswith("!") and not answer.strip().endswith("?"):
                     answer += "."
                 answer = answer + " (Note: This response was generated without reference to your uploaded documents. Upload documents to get answers based on your content.)"
                 return answer, [], {}
+            except asyncio.TimeoutError:
+                logger.error(f"LLM generation timed out for user {user.id}")
+                return (
+                    "I'm sorry, but generating a response took too long. Please try rephrasing your question or check your API keys.",
+                    [],
+                    {}
+                )
             except Exception as e:
                 logger.error(f"Error generating LLM response without context: {e}", exc_info=True)
                 return (
@@ -555,7 +583,15 @@ TAGS: {', '.join(tags) if tags else 'None'}"""
         
         # 7. Call LLM
         logger.info(f"Calling LLM for user {user.id}, session {session.id}")
-        answer = await self._llm.generate(messages)
+        import asyncio
+        try:
+            answer = await asyncio.wait_for(
+                self._llm.generate(messages),
+                timeout=30.0  # 30 second timeout
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"LLM generation timed out for user {user.id}")
+            answer = "I'm sorry, but generating a response took too long. Please try rephrasing your question or check your API keys."
         logger.info(f"Generated answer ({len(answer)} chars) for user {user.id}")
         
         # 8. Collect image analysis info if images were analyzed

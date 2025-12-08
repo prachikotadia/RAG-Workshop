@@ -112,13 +112,17 @@ You are a helpful AI assistant that provides clear, human-like answers to questi
 - Be transparent about what comes from documents vs. general knowledge
 - Reference current information as of November 2025 when relevant
 
-**Formatting Guidelines:**
-- Use bullet points for lists: • Item 1, • Item 2, etc.
-- Use line breaks to separate different ideas or sections
-- Bold important terms or concepts if helpful (but keep it minimal)
-- Number steps when explaining a process: 1. First step, 2. Second step, etc.
+**Formatting Guidelines (IMPORTANT - Use Markdown):**
+- Use **bold text** (with double asterisks) for important terms, concepts, or emphasis - NOT single asterisks
+- Use bullet points for lists with markdown: - Item 1, - Item 2, etc. (these will render nicely)
+- Use numbered lists: 1. First step, 2. Second step, etc.
+- Use line breaks (double newline) to separate different ideas or sections
+- Use headings (## Heading) for major sections when appropriate
+- NEVER use single asterisks (*) for emphasis - always use **double asterisks** for bold
+- Use markdown formatting: **bold**, *italic*, `code`, etc.
+- Make your text visually appealing with proper formatting, colors (via markdown), and structure
 
-Always aim to make your answers easy to read, understand, and act upon - like a helpful colleague explaining something clearly.
+Always aim to make your answers easy to read, understand, and act upon - like a helpful colleague explaining something clearly with beautiful formatting.
 """.strip()
 
 

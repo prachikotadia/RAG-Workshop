@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authApi, User } from '../api/auth';
 import { ApiError } from '../api/client';
@@ -33,9 +33,9 @@ export function useAuth(): UseAuthReturn {
       setLoading(true);
       setError(null);
       
-      // Add timeout to prevent infinite loading
+      // Add reasonable timeout (3 seconds - fail fast for better UX)
       const timeoutPromise = new Promise<never>((_, reject) => 
-        setTimeout(() => reject({ detail: 'Request timeout', status: 0 } as ApiError), 10000)
+        setTimeout(() => reject({ detail: 'Request timeout', status: 0 } as ApiError), 3000)
       );
       
       const currentUser = await Promise.race([
@@ -47,16 +47,21 @@ export function useAuth(): UseAuthReturn {
       if (!token) {
         setToken(currentToken);
       }
+      setError(null); // Clear any previous errors on success
     } catch (err) {
       const apiError = err as ApiError;
-      const errorMessage = typeof apiError.detail === 'string' ? apiError.detail : 'Failed to fetch user';
-      setError(errorMessage);
-      // If 401, network error, or timeout, clear token and redirect
-      if (apiError.status === 401 || apiError.status === 0) {
+      
+      // Only clear token and redirect on 401 (unauthorized), not on timeout/network errors
+      if (apiError.status === 401) {
         localStorage.removeItem('access_token');
         setToken(null);
         setUser(null);
+        setError(null);
         navigate('/login');
+      } else {
+        // Network error or timeout - keep token, don't set error, don't log
+        // Silently fail - user can still use the app if they have a valid token
+        setError(null);
       }
     } finally {
       setLoading(false);
@@ -68,8 +73,10 @@ export function useAuth(): UseAuthReturn {
     const storedToken = localStorage.getItem('access_token');
     if (storedToken) {
       setToken(storedToken);
-      // Fetch user immediately if we have a token
-      fetchCurrentUser();
+      // Fetch user in background - don't block UI
+      fetchCurrentUser().catch(() => {
+        // Silently handle errors - user can still use app
+      });
     } else {
       setLoading(false);
     }
@@ -77,14 +84,28 @@ export function useAuth(): UseAuthReturn {
   }, []); // Only run once on mount
 
   // Fetch current user when token changes (but not on initial mount)
+  // Prevent excessive retries - only fetch once per token change, no auto-retry
+  const hasFetchedRef = useRef(false);
+  const lastTokenRef = useRef<string | null>(null);
+  
   useEffect(() => {
-    if (token && !user) {
+    // Only fetch if token changed (not just on mount)
+    if (token && token !== lastTokenRef.current) {
+      lastTokenRef.current = token;
+      hasFetchedRef.current = false;
+    }
+    
+    if (token && !user && !hasFetchedRef.current) {
+      hasFetchedRef.current = true;
       fetchCurrentUser();
+      // Don't reset hasFetchedRef - only allow manual retry via fetchCurrentUser()
     } else if (!token) {
+      hasFetchedRef.current = false;
+      lastTokenRef.current = null;
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, user]);
 
   const login = useCallback(async (email: string, password: string) => {
     try {

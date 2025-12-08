@@ -18,11 +18,17 @@ export function App() {
   const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'error'>('checking');
   const [backendError, setBackendError] = useState<string>('');
 
-  // Check backend connectivity on mount
+  // Check backend connectivity on mount (non-blocking, with timeout)
   useEffect(() => {
     const checkBackend = async () => {
       try {
+        // Use AbortController for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+        
         const response = await api.get<{ status: string }>('/health');
+        clearTimeout(timeoutId);
+        
         if (response.status === 'ok') {
           setBackendStatus('connected');
           setBackendError('');
@@ -33,20 +39,23 @@ export function App() {
       } catch (error: any) {
         setBackendStatus('error');
         setBackendError(error?.detail || 'Could not connect to backend');
-        console.error('Backend health check failed:', error);
+        // Don't log to console in production - just set status
       }
     };
+    // Don't block - check in background
     checkBackend();
   }, []);
 
-  // Show loading state
-  if (loading) {
+  // Show loading state only briefly - don't block UI for too long
+  // If we have a token, show UI immediately and load user in background
+  const hasToken = !!localStorage.getItem('access_token');
+  if (loading && !hasToken) {
+    // Only show loading if we don't have a token (first visit)
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900">
         <div className="text-center">
           <LoadingSpinner size="lg" className="mb-4" />
           <div className="text-gray-500 dark:text-gray-400 mb-2">Loading...</div>
-          <div className="text-xs text-gray-400 dark:text-gray-500">Please wait</div>
         </div>
       </div>
     );

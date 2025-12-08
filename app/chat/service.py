@@ -307,15 +307,31 @@ async def handle_user_message(
         # 3. Call RAG chain (exclude the current user message from history to avoid duplication)
         logger.info(f"Calling RAG chain for question: {question[:50]}...")
         try:
-            answer_text, citations, analysis_info = await rag_chain.answer_question(
-                db=db,
-                user=user,
-                session=session,
-                question=question,
-                top_k=10,
-                exclude_message_id=user_msg.id,  # Exclude current user message from history
+            import asyncio
+            # Add timeout to RAG chain call to prevent hanging
+            answer_text, citations, analysis_info = await asyncio.wait_for(
+                rag_chain.answer_question(
+                    db=db,
+                    user=user,
+                    session=session,
+                    question=question,
+                    top_k=10,
+                    exclude_message_id=user_msg.id,  # Exclude current user message from history
+                ),
+                timeout=50.0  # 50 second timeout for RAG processing
             )
             logger.info(f"RAG chain returned answer ({len(answer_text)} chars) with {len(citations)} citations")
+        except asyncio.TimeoutError:
+            logger.error(f"RAG chain timed out for question: {question[:50]}...")
+            answer_text = "I'm sorry, but processing your question took too long. Please try rephrasing it or asking a simpler question."
+            citations = []
+            analysis_info = None
+        except TimeoutError as te:
+            # LLM generation timeout
+            logger.error(f"LLM generation timed out: {te}")
+            answer_text = "I'm sorry, but generating a response took too long. Please try rephrasing your question or check your API keys."
+            citations = []
+            analysis_info = None
             
             # If image analysis was performed, include it in the response
             if analysis_info and analysis_info.get("has_analysis") and analysis_info.get("image_analyses"):

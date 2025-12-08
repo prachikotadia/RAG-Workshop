@@ -34,33 +34,65 @@ class LightweightCaptionModel:
     
     def __init__(self, model_name: Optional[str] = None, device: Optional[str] = None):
         from app.config import get_settings
+        import threading
         settings = get_settings()
         self.model_name = model_name or settings.local_caption_model_name
         self.device = device
         self._processor = None
         self._model = None
+        self._lock = threading.Lock()  # Thread safety for model access
     
     def _get_model(self):
         """Lazy initialization of captioning model."""
         if self._model is None:
-            try:
-                from transformers import BlipProcessor, BlipForConditionalGeneration
-                import torch
-                
-                if self.device is None:
-                    self.device = "cuda" if torch.cuda.is_available() else "cpu"
-                
-                logger.info(f"Loading lightweight captioning model: {self.model_name} on {self.device}")
-                self._processor = BlipProcessor.from_pretrained(self.model_name)
-                self._model = BlipForConditionalGeneration.from_pretrained(self.model_name).to(self.device)
-                self._model.eval()
-                logger.info(f"Captioning model loaded successfully on {self.device}")
-                
-            except ImportError:
-                raise ImportError("transformers and torch not installed. Install with: pip install transformers torch")
-            except Exception as e:
-                logger.error(f"Failed to load captioning model: {e}", exc_info=True)
-                raise
+            with self._lock:  # Thread-safe initialization
+                if self._model is None:  # Double-check after acquiring lock
+                    try:
+                        from transformers import BlipProcessor, BlipForConditionalGeneration
+                        import torch
+                        import os
+                        
+                        if self.device is None:
+                            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+                        
+                        logger.info(f"Loading lightweight captioning model: {self.model_name} on {self.device}")
+                        
+                        # CRITICAL: Limit OpenMP threads to prevent crashes
+                        # Set environment variables before importing/using PyTorch
+                        os.environ.setdefault('OMP_NUM_THREADS', '1')
+                        os.environ.setdefault('MKL_NUM_THREADS', '1')
+                        os.environ.setdefault('NUMEXPR_NUM_THREADS', '1')
+                        os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
+                        
+                        # Load with optimizations for faster inference
+                        # Note: Model download happens here - if it's slow, the timeout in get_caption_model() will catch it
+                        self._processor = BlipProcessor.from_pretrained(
+                            self.model_name,
+                            cache_dir=None,  # Use default cache
+                            local_files_only=False
+                        )
+                        self._model = BlipForConditionalGeneration.from_pretrained(
+                            self.model_name,
+                            cache_dir=None,
+                            local_files_only=False,
+                            torch_dtype=torch.float32  # Use float32 for CPU (faster than float16 on CPU)
+                        ).to(self.device)
+                        self._model.eval()
+                        # Optimize model for inference
+                        if self.device == "cpu":
+                            # Use torch.jit.optimize_for_inference if available for CPU
+                            try:
+                                torch.set_num_threads(1)  # CRITICAL: Use single thread to prevent crashes
+                                torch.set_num_interop_threads(1)  # Limit inter-op threads
+                            except:
+                                pass
+                        logger.info(f"Captioning model loaded successfully on {self.device}")
+                        
+                    except ImportError:
+                        raise ImportError("transformers and torch not installed. Install with: pip install transformers torch")
+                    except Exception as e:
+                        logger.error(f"Failed to load captioning model: {e}", exc_info=True)
+                        raise
         return self._processor, self._model
     
     async def generate_caption(self, image_path: Path, max_length: int = 50) -> str:
@@ -77,15 +109,32 @@ class LightweightCaptionModel:
         import asyncio
         from PIL import Image
         import torch
+        import os
         
-        processor, model = self._get_model()
+        # CRITICAL: Set thread limits before any PyTorch operations
+        os.environ.setdefault('OMP_NUM_THREADS', '1')
+        os.environ.setdefault('MKL_NUM_THREADS', '1')
+        os.environ.setdefault('NUMEXPR_NUM_THREADS', '1')
+        
+        # Thread-safe model access
+        with self._lock:
+            processor, model = self._get_model()
         
         def _caption_sync():
             """Synchronous caption generation."""
             try:
+                # Set thread limits inside the executor to ensure they're applied
+                os.environ['OMP_NUM_THREADS'] = '1'
+                os.environ['MKL_NUM_THREADS'] = '1'
+                os.environ['NUMEXPR_NUM_THREADS'] = '1'
+                torch.set_num_threads(1)
+                torch.set_num_interop_threads(1)
+                
                 image = Image.open(image_path).convert("RGB")
                 
-                max_size = 384
+                # Resize to smaller size for faster processing on CPU
+                # 224px is sufficient for BLIP and much faster
+                max_size = 224
                 if max(image.size) > max_size:
                     ratio = max_size / max(image.size)
                     new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
@@ -95,13 +144,16 @@ class LightweightCaptionModel:
                 
                 actual_max_length = min(max_length, 50)
                 with torch.no_grad():
+                    # Optimize for speed: use greedy decoding (num_beams=1), no sampling
+                    # Set low max_new_tokens for faster generation
                     generated_ids = model.generate(
                         **inputs,
                         max_length=actual_max_length,
-                        num_beams=1,
-                        do_sample=False,
-                        max_new_tokens=min(actual_max_length, 40),
-                        pad_token_id=processor.tokenizer.pad_token_id or processor.tokenizer.eos_token_id
+                        num_beams=1,  # Greedy decoding (fastest)
+                        do_sample=False,  # Deterministic (faster)
+                        max_new_tokens=30,  # Shorter captions = faster
+                        pad_token_id=processor.tokenizer.pad_token_id or processor.tokenizer.eos_token_id,
+                        early_stopping=True  # Stop early if possible
                     )
                 
                 caption = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
@@ -113,14 +165,15 @@ class LightweightCaptionModel:
         
         try:
             loop = asyncio.get_event_loop()
+            # Increased timeout for CPU inference (can be slow, especially first time)
             result = await asyncio.wait_for(
                 loop.run_in_executor(None, _caption_sync),
-                timeout=4.0
+                timeout=60.0  # 60 seconds for CPU inference
             )
             return result
         except asyncio.TimeoutError:
             logger.error(f"Caption generation timed out for {image_path}")
-            raise TimeoutError(f"Caption generation timed out after 4 seconds")
+            raise TimeoutError(f"Caption generation timed out after 60 seconds")
         except Exception as e:
             logger.error(f"Caption generation failed for {image_path}: {e}", exc_info=True)
             raise
@@ -128,28 +181,101 @@ class LightweightCaptionModel:
 
 # Global captioning model instance
 _caption_model_instance: Optional[LightweightCaptionModel] = None
+_caption_model_crashed: bool = False  # Track if model has crashed to prevent retries
 
 
-def get_caption_model() -> Optional[LightweightCaptionModel]:
+def get_caption_model(force: bool = False, timeout: float = 10.0) -> Optional[LightweightCaptionModel]:
     """
     Get or create the global captioning model instance.
     
     Captioning models can be slow on CPU. Set ENABLE_CAPTION_MODEL=false to disable.
+    
+    Args:
+        force: If True, load the model even if ENABLE_CAPTION_MODEL is False (useful for fallback scenarios)
+        timeout: Maximum time (seconds) to wait for model loading/downloading. Default 10s (short to fail fast).
     """
-    global _caption_model_instance
+    global _caption_model_instance, _caption_model_crashed
     from app.config import get_settings
+    import threading
+    import time
     settings = get_settings()
     
-    if not settings.enable_caption_model:
+    # If model has crashed before, don't try again (prevents repeated crashes)
+    if _caption_model_crashed:
+        logger.warning("Captioning model previously crashed - skipping to prevent further crashes")
+        return None
+    
+    if not settings.enable_caption_model and not force:
         logger.debug("Captioning model disabled")
         return None
     
     if _caption_model_instance is None:
         try:
-            _caption_model_instance = LightweightCaptionModel()
-            logger.info("Local captioning model loaded successfully")
+            if force and not settings.enable_caption_model:
+                logger.info("Forcing local captioning model load (fallback scenario)")
+            
+            # Check if model is already cached to avoid slow downloads
+            try:
+                from transformers import BlipProcessor
+                from huggingface_hub import cached_assets_path
+                import os
+                
+                # Quick check: see if model files exist in cache
+                model_name = settings.local_caption_model_name
+                cache_path = os.path.expanduser("~/.cache/huggingface/hub")
+                # This is a heuristic - if cache doesn't exist or is empty, skip loading
+                if not os.path.exists(cache_path) or not os.listdir(cache_path):
+                    logger.warning("Model cache not found - skipping slow download, using metadata fallback")
+                    return None
+            except Exception:
+                # If we can't check cache, proceed with loading attempt
+                pass
+            
+            logger.info(f"Initializing local captioning model (timeout: {timeout}s)...")
+            
+            # Model loading result
+            model_result = {"instance": None, "error": None, "done": False}
+            
+            def load_model():
+                """Load model in a separate thread."""
+                try:
+                    model_result["instance"] = LightweightCaptionModel()
+                    model_result["done"] = True
+                    logger.info("Local captioning model loaded successfully")
+                except Exception as e:
+                    logger.error(f"Model loading error: {e}")
+                    model_result["error"] = e
+                    model_result["done"] = True
+            
+            # Load model in a thread with timeout
+            loader_thread = threading.Thread(target=load_model, daemon=True)
+            loader_thread.start()
+            
+            # Wait with timeout, but check periodically
+            start_time = time.time()
+            while loader_thread.is_alive() and (time.time() - start_time) < timeout:
+                time.sleep(0.5)  # Check every 0.5 seconds
+            
+            if loader_thread.is_alive():
+                logger.warning(f"Model loading timed out after {timeout}s - skipping local model, using metadata fallback")
+                return None
+            
+            if model_result["error"]:
+                if isinstance(model_result["error"], ImportError):
+                    logger.error(f"Failed to load captioning model - missing dependencies: {model_result['error']}")
+                    logger.error("Please install: pip install transformers torch")
+                else:
+                    logger.error(f"Failed to load captioning model: {model_result['error']}", exc_info=True)
+                return None
+            
+            if model_result["instance"]:
+                _caption_model_instance = model_result["instance"]
+            else:
+                logger.warning("Model loading completed but no instance created")
+                return None
+            
         except Exception as e:
-            logger.warning(f"Failed to load captioning model: {e}")
+            logger.error(f"Failed to initialize captioning model: {e}", exc_info=True)
             return None
     return _caption_model_instance
 
@@ -405,16 +531,30 @@ async def scan_image_comprehensively(image_path: Path, question: Optional[str] =
         
         logger.info(f"Starting comprehensive image scan for {image_path}")
         
-        analysis = await analyze_image(image_path, question=question)
+        # Add timeout wrapper for analyze_image
+        # Allow more time if local model is enabled (needs time to load/process)
+        import asyncio
+        from app.config import get_settings
+        settings = get_settings()
         
-        # Generate CLIP embedding for similarity search
+        # Faster timeout - fail fast to metadata fallback
+        timeout = 8.0  # Reduced from 30s/10s to 8s - prioritize speed
+        
         try:
-            clip_embedding = await clip.embed_image(image_path)
-            clip_embedding_dim = len(clip_embedding) if clip_embedding else 0
-        except Exception as e:
-            logger.warning(f"CLIP embedding generation failed: {e}")
-            clip_embedding = None
-            clip_embedding_dim = 0
+            analysis = await asyncio.wait_for(
+                analyze_image(image_path, question=question),
+                timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Image analysis timed out after {timeout} seconds, using metadata fallback")
+            # Return minimal metadata fallback
+            raise ValueError("Image analysis timed out, using metadata")
+        
+        # Skip CLIP embedding generation for faster processing
+        # CLIP embeddings are not critical for basic image search
+        clip_embedding = None
+        clip_embedding_dim = 0
+        logger.debug("Skipping CLIP embedding generation for faster processing")
         
         # Build comprehensive scan text
         full_scan_text = f"""=== REAL IMAGE ANALYSIS ===
@@ -445,6 +585,9 @@ CLIP EMBEDDING: Generated ({clip_embedding_dim} dimensions) for similarity searc
         logger.info(f"Comprehensive scan completed for {image_path}")
         
         return {
+            "scan_text": full_scan_text,  # Add scan_text for document service
+            "caption": analysis.get('caption', ''),
+            "description": analysis.get('description', ''),
             "basic_caption": analysis.get('caption', ''),
             "detailed_description": analysis.get('description', ''),
             "objects": analysis.get('objects', []),
@@ -454,6 +597,7 @@ CLIP EMBEDDING: Generated ({clip_embedding_dim} dimensions) for similarity searc
             "colors": analysis.get('colors', []),
             "scene_type": analysis.get('scene_type', 'unknown'),
             "mood": analysis.get('mood', []),
+            "analysis_source": analysis.get('analysis_source', 'Unknown'),
             "text_content": [],
             "clip_embedding": clip_embedding,
             "clip_embedding_dim": clip_embedding_dim,
@@ -462,9 +606,35 @@ CLIP EMBEDDING: Generated ({clip_embedding_dim} dimensions) for similarity searc
             "analysis_source": analysis.get('analysis_source', 'Unknown'),
             "model_used": analysis.get('model_used', 'N/A')
         }
+    except ValueError as ve:
+        # Timeout or intentional fallback - use metadata
+        logger.info(f"Using metadata fallback for {image_path}: {ve}")
+        # Return minimal metadata structure
+        return {
+            "scan_text": f"Image: {image_path.name}\n\nMetadata: Basic image file information",
+            "caption": image_path.name,
+            "description": f"Image file: {image_path.name}",
+            "basic_caption": image_path.name,
+            "detailed_description": f"Image file: {image_path.name}",
+            "objects": [],
+            "people": [],
+            "animals": [],
+            "actions": [],
+            "colors": [],
+            "scene_type": "unknown",
+            "mood": [],
+            "text_content": [],
+            "clip_embedding": None,
+            "clip_embedding_dim": 0,
+            "full_scan_text": f"Image: {image_path.name}\n\nMetadata: Basic image file information",
+            "scan_complete": False,
+            "analysis_source": "Metadata Fallback",
+            "model_used": "None"
+        }
     except Exception as e:
         logger.error(f"Error in REAL comprehensive image scan for {image_path}: {e}", exc_info=True)
         return {
+            "scan_text": f"Image: {image_path.name}\n\nMetadata: Error during scan",
             "basic_caption": "Scan unavailable",
             "detailed_description": f"Error during scan: {e}",
             "objects": [],
@@ -504,11 +674,17 @@ async def analyze_image(image_path: Path, question: Optional[str] = None) -> Dic
         from app.config import get_settings
         settings = get_settings()
         
+        openai_failed = False
+        should_fallback_to_local = False
+        is_rate_limit_error = False
+        error_obj = None
+        
         if settings.openai_api_key:
             try:
                 logger.info("Attempting OpenAI Vision API")
                 from app.rag.vision_analyzer import analyze_image_with_vision
                 
+                # Faster timeout for OpenAI Vision - fail fast if slow
                 vision_result = await asyncio.wait_for(
                     analyze_image_with_vision(
                         image_path=image_path,
@@ -516,7 +692,7 @@ async def analyze_image(image_path: Path, question: Optional[str] = None) -> Dic
                         api_key=settings.openai_api_key,
                         model=settings.llm_model if ("gpt-4" in settings.llm_model.lower() or "gpt-4o" in settings.llm_model.lower()) else "gpt-4o-mini"
                     ),
-                    timeout=30.0
+                    timeout=8.0  # Reduced from 30s to 8s - fail fast
                 )
                 
                 logger.info(f"OpenAI Vision API succeeded")
@@ -533,29 +709,106 @@ async def analyze_image(image_path: Path, question: Optional[str] = None) -> Dic
                 }
             except asyncio.TimeoutError:
                 logger.error("OpenAI Vision API timed out")
+                openai_failed = True
             except Exception as e:
-                logger.warning(f"OpenAI Vision API failed: {e}, trying local captioning model")
+                error_str = str(e).lower()
+                openai_failed = True
+                error_obj = e  # Store error for later use
+                
+                # Check for rate limit errors
+                if "rate limit" in error_str or "429" in error_str or "rate_limit" in error_str:
+                    logger.warning(f"OpenAI rate limit reached: {e}")
+                    logger.info("Will use local captioning model as fallback (rate limit)")
+                    is_rate_limit_error = True
+                    should_fallback_to_local = True  # Use local model for rate limits
+                # Check for content policy refusals
+                elif any(pattern in error_str for pattern in [
+                    "content policy", "unable to assist", "i'm unable", "i cannot",
+                    "i can't", "cannot analyze", "refused", "safety guidelines"
+                ]):
+                    logger.warning(f"OpenAI refused due to content policy: {e}")
+                    logger.info("Falling back to local captioning model due to content policy")
+                    should_fallback_to_local = True
+                else:
+                    # Other errors - still try local model as fallback
+                    logger.warning(f"OpenAI Vision API failed: {e}, trying local captioning model")
+                    logger.info("Falling back to local captioning model")
+                    should_fallback_to_local = True
         
+        # Try local captioning model if OpenAI failed or if no OpenAI key
+        # Use local model if ENABLE_CAPTION_MODEL=true and OpenAI failed or no key
         caption_model = None
-        if not settings.openai_api_key:
-            caption_model = get_caption_model()
+        
+        if settings.enable_caption_model:
+            # Local model is enabled - try it if OpenAI failed or no OpenAI key
+            if not settings.openai_api_key:
+                logger.info("No OpenAI API key - attempting local captioning model as fallback")
+                caption_model = get_caption_model(timeout=10.0)  # Allow more time for first load
+            elif openai_failed and should_fallback_to_local:
+                # OpenAI failed but we should try local model (rate limit, content policy, etc.)
+                logger.info("OpenAI failed - attempting local captioning model as fallback")
+                caption_model = get_caption_model(timeout=10.0)  # Allow more time for first load
+            elif openai_failed:
+                # OpenAI failed but not a rate limit - still try local if enabled
+                logger.info("OpenAI failed - attempting local captioning model as fallback")
+                caption_model = get_caption_model(timeout=10.0)
+            else:
+                # OpenAI succeeded, but user enabled local model - don't use it (OpenAI is better)
+                logger.info("OpenAI succeeded - skipping local model (OpenAI is faster and better)")
+                caption_model = None
+        else:
+            # Local model not enabled - use metadata fallback
+            if not settings.openai_api_key:
+                logger.info("No OpenAI API key and local model disabled - using metadata fallback")
+            elif openai_failed:
+                logger.info("OpenAI failed and local model disabled - using metadata fallback")
+            caption_model = None
+        
+        if caption_model is None:
+            logger.error("Local captioning model could not be loaded - check logs above for errors")
+            logger.error("This may be due to:")
+            logger.error("1. Missing dependencies (pip install transformers torch)")
+            logger.error("2. Model download failure")
+            logger.error("3. Insufficient memory")
         
         if caption_model:
+            global _caption_model_crashed  # Declare global at function scope
             try:
                 logger.info("Attempting local captioning model")
                 
                 try:
+                    # Use very short timeout for local model to prevent hanging
+                    # This prevents documents from getting stuck in INDEXING
+                    timeout_seconds = 3.0  # Reduced from 5s to 3s - fail very fast
+                    logger.info(f"Generating caption with local model (timeout: {timeout_seconds}s)...")
                     caption = await asyncio.wait_for(
-                        caption_model.generate_caption(image_path, max_length=50),
-                        timeout=3.0
+                        caption_model.generate_caption(image_path, max_length=20),  # Even shorter captions = faster
+                        timeout=timeout_seconds
                     )
                     logger.debug(f"Generated caption: {caption[:100]}...")
                 except asyncio.TimeoutError:
-                    logger.error("Local captioning model timed out")
-                    raise
+                    logger.warning("Local captioning model timed out - using metadata fallback")
+                    # Don't raise - fall through to metadata fallback
+                    caption = None
                 except Exception as e:
-                    logger.error(f"Local captioning model error: {e}")
-                    raise
+                    logger.warning(f"Local captioning model error: {e} - using metadata fallback")
+                    # Mark model as potentially crashed if it's a serious error
+                    if "segmentation" in str(e).lower() or "sigsegv" in str(e).lower() or "crash" in str(e).lower():
+                        _caption_model_crashed = True
+                        logger.error("Captioning model crashed - disabling for remainder of session")
+                    # Don't raise - fall through to metadata fallback
+                    caption = None
+            except Exception as e:
+                # Catch any other errors (including potential crashes)
+                logger.error(f"Unexpected error with captioning model: {e}", exc_info=True)
+                _caption_model_crashed = True
+                logger.error("Captioning model encountered error - disabling for remainder of session")
+                caption = None
+                
+                # If caption generation failed, skip to metadata fallback
+                if not caption:
+                    logger.info("Skipping to metadata fallback due to caption generation failure")
+                    raise ValueError("Caption generation failed, using metadata fallback")
                 
                 caption_lower = caption.lower()
                 

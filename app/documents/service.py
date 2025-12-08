@@ -4,6 +4,7 @@ Document service for managing documents.
 Orchestrates document ingestion pipeline (upload, parse, chunk, store, embed, index).
 """
 import uuid
+import asyncio
 from pathlib import Path
 from datetime import datetime
 from typing import List
@@ -158,7 +159,8 @@ async def process_and_index_document(
             document.status = DocumentStatus.INDEXING
             db.commit()
             db.refresh(document)
-            logger.info(f"Document {document.id} status set to INDEXING")
+            logger.info(f"📄 [INDEXING] Document {document.id} ('{document.title}') - Status changed to INDEXING")
+            logger.info(f"📄 [INDEXING] Document {document.id} - Starting indexing process...")
         except Exception as e:
             logger.error(f"Failed to set status to INDEXING: {e}", exc_info=True)
             # Try to set FAILED as fallback
@@ -171,11 +173,12 @@ async def process_and_index_document(
         
         # Extract text and metadata
         try:
+            logger.info(f"📄 [INDEXING] Document {document.id} - Step 1/5: Extracting text and metadata...")
             text, file_metadata = extract_text_from_file(file_path)
             if not text or not text.strip():
                 logger.error(f"Extracted text is empty for document {document.id}")
                 raise ValueError("Extracted text is empty or invalid")
-            logger.info(f"Extracted text from file ({len(text)} chars) for document {document.id}")
+            logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Extracted {len(text)} characters from file")
         except Exception as e:
             logger.error(f"Failed to extract text from file for document {document.id}: {e}", exc_info=True)
             raise ValueError(f"Failed to parse file: {str(e)}")
@@ -185,7 +188,8 @@ async def process_and_index_document(
         
         # Process image or text
         if is_image:
-            logger.info(f"Processing image file: {file_path} (document ID: {document.id})")
+            logger.info(f"📄 [INDEXING] Document {document.id} - Step 2/5: Analyzing image file...")
+            logger.info(f"📄 [INDEXING] Document {document.id} - Image path: {file_path}")
             
             import asyncio
             try:
@@ -194,47 +198,45 @@ async def process_and_index_document(
                     processed_text = text
                     
                     try:
-                        from app.rag.image_analyzer import scan_image_comprehensively, get_blip2_analyzer, get_clip_provider
+                        # Use the new comprehensive scan function (more stable and faster)
+                        from app.rag.image_analyzer import scan_image_comprehensively
                         
-                        blip2 = get_blip2_analyzer()
-                        clip = get_clip_provider()
-                        
+                        logger.info(f"📄 [INDEXING] Document {document.id} - Attempting image analysis (OpenAI → Local → Metadata)...")
                         try:
-                            basic_caption = await asyncio.wait_for(
-                                blip2.generate_caption(file_path, max_length=40),
-                                timeout=15.0
+                            # Use comprehensive scan with fast timeout
+                            # Prioritize speed - fail fast to metadata
+                            scan_result = await asyncio.wait_for(
+                                scan_image_comprehensively(file_path),
+                                timeout=8.0  # Reduced to 8s - fail fast
                             )
+                            logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Image analysis completed")
                             
-                            detailed_desc = await asyncio.wait_for(
-                                blip2.generate_detailed_description(file_path),
-                                timeout=20.0
-                            )
+                            # Extract information from scan result
+                            scan_text = scan_result.get('scan_text', '')
+                            caption = scan_result.get('caption', '')
+                            description = scan_result.get('description', '')
                             
-                            clip_embedding = None
-                            
+                            # Build processed text from scan
                             processed_text = f"""Image: {document.title}
 
-BASIC CAPTION:
-{basic_caption}
-
-DETAILED DESCRIPTION:
-{detailed_desc}
+{scan_text}
 
 === Image Metadata ===
 {text}"""
                             
-                            file_metadata['scan_complete'] = False
-                            file_metadata['basic_caption'] = basic_caption
-                            file_metadata['detailed_description'] = detailed_desc
-                            file_metadata['clip_embedding_dim'] = len(clip_embedding) if clip_embedding else 0
+                            file_metadata['scan_complete'] = True
+                            file_metadata['basic_caption'] = caption
+                            file_metadata['detailed_description'] = description
+                            file_metadata['analysis_source'] = scan_result.get('analysis_source', 'Unknown')
                             
                             caption_generated = True
-                            logger.info(f"Image analysis completed for document {document.id}")
+                            analysis_source = scan_result.get('analysis_source', 'Unknown')
+                            logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Image analysis completed using: {analysis_source}")
                         
                         except asyncio.TimeoutError:
-                            logger.warning(f"Image analysis timed out for document {document.id}, using metadata only")
+                            logger.warning(f"📄 [INDEXING] Document {document.id} - ⚠ Image analysis timed out, falling back to metadata")
                         except Exception as e:
-                            logger.warning(f"Image analysis failed for document {document.id}: {e}, using metadata only", exc_info=True)
+                            logger.warning(f"📄 [INDEXING] Document {document.id} - ⚠ Image analysis failed: {e}, falling back to metadata", exc_info=True)
                     except Exception as e:
                         logger.warning(f"[IMAGE] Image scanner initialization failed for document {document.id}: {e}, using basic metadata", exc_info=True)
                     
@@ -246,36 +248,39 @@ DETAILED DESCRIPTION:
                     logger.info(f"[IMAGE] Image processing completed for document {document.id}, text length: {len(processed_text)}")
                     return processed_text
                 
-                # Execute with overall timeout (60 seconds - reduced for faster processing)
-                logger.info(f"[IMAGE] Starting image processing with 60s timeout for document {document.id}")
-                text = await asyncio.wait_for(process_image_with_timeout(), timeout=60.0)
+                # Execute with fast timeout - prioritize speed
+                # If analysis takes too long, use metadata fallback immediately
+                timeout = 10.0  # Reduced to 10s - fail fast to metadata
+                
+                logger.info(f"📄 [INDEXING] Document {document.id} - Starting image processing with {timeout}s timeout...")
+                text = await asyncio.wait_for(process_image_with_timeout(), timeout=timeout)
                 logger.info(f"[IMAGE] Image processing completed successfully for document {document.id}, text length: {len(text)}")
                 
             except asyncio.TimeoutError as timeout_err:
-                logger.error(f"Image processing timed out after 60 seconds for document {document.id}: {timeout_err}", exc_info=True)
-                # Use basic metadata if everything times out
+                logger.warning(f"📄 [INDEXING] Document {document.id} - ⚠ Image processing timed out, using metadata")
+                # Use basic metadata if everything times out - don't fail, just use metadata
                 if not text or not text.strip():
                     text = f"Image: {document.title}\n\nMetadata: {file_metadata}"
-                logger.info(f"[IMAGE] Using fallback text for document {document.id} after timeout")
-                # CRITICAL: Re-raise to trigger FAILED status
-                raise ValueError(f"Image processing timed out after 60 seconds: {str(timeout_err)}")
+                logger.info(f"[IMAGE] Using fallback text for document {document.id} after timeout - continuing with metadata")
+                # Don't raise error - continue with metadata instead of failing
             except Exception as e:
-                logger.error(f"Image processing failed for document {document.id}: {e}", exc_info=True)
-                # Use basic metadata if processing fails
+                logger.warning(f"Image processing failed for document {document.id}: {e}")
+                # Use basic metadata if processing fails - don't fail the document
                 if not text or not text.strip():
                     text = f"Image: {document.title}\n\nMetadata: {file_metadata}"
-                logger.info(f"[IMAGE] Using fallback text for document {document.id} after error")
-                # CRITICAL: Re-raise to trigger FAILED status
-                raise ValueError(f"Image processing failed: {str(e)}")
+                logger.info(f"[IMAGE] Using fallback text for document {document.id} after error - continuing with metadata")
+                # Don't raise error - continue with metadata instead of failing
             
             # Ensure we have valid text before chunking
             if not text or not text.strip():
-                logger.error(f"No text available for document {document.id} after all processing attempts")
-                raise ValueError("Failed to generate text for image after all processing attempts")
+                logger.warning(f"No text available for document {document.id} after all processing attempts - using minimal text")
+                text = f"Image: {document.title}\n\nMetadata: {file_metadata}"
+                # Don't raise error - use minimal text instead
             
             # Chunk the image description
             # If comprehensive scan is present, keep it as ONE chunk to preserve all scan data
             try:
+                logger.info(f"📄 [INDEXING] Document {document.id} - Step 3/5: Chunking text ({len(text)} chars)...")
                 if "COMPREHENSIVE IMAGE SCAN" in text:
                     # For comprehensive scans, keep as single chunk to preserve all sections together
                     chunks_info = [{
@@ -283,6 +288,7 @@ DETAILED DESCRIPTION:
                         "text": text,
                         "token_count": len(text.split())
                     }]
+                    logger.info(f"📄 [INDEXING] Document {document.id} - Using single chunk for comprehensive scan")
                 else:
                     # For regular image analysis, use chunking
                     chunks_info = chunk_text(text, max_words=500, overlap_words=0)
@@ -290,7 +296,7 @@ DETAILED DESCRIPTION:
                 if not chunks_info or len(chunks_info) == 0:
                     logger.error(f"No chunks generated for document {document.id}")
                     raise ValueError("No chunks generated from image text")
-                logger.info(f"Created {len(chunks_info)} chunks for document {document.id}")
+                logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Created {len(chunks_info)} chunk(s)")
             except Exception as e:
                 logger.error(f"Failed to chunk image text for document {document.id}: {e}", exc_info=True)
                 raise ValueError(f"Failed to chunk image text: {str(e)}")
@@ -299,9 +305,11 @@ DETAILED DESCRIPTION:
             if not text or not text.strip():
                 raise ValueError("Extracted text is empty")
             
-            # Step 5: Chunk the text
+            # Step 3: Chunk the text
+            logger.info(f"📄 [INDEXING] Document {document.id} - Step 3/5: Chunking text ({len(text)} chars)...")
             try:
                 chunks_info = chunk_text(text, max_words=200, overlap_words=50)
+                logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Created {len(chunks_info)} chunk(s)")
             except Exception as e:
                 logger.error(f"Failed to chunk text: {e}", exc_info=True)
                 raise ValueError(f"Failed to chunk document text: {str(e)}")
@@ -311,7 +319,7 @@ DETAILED DESCRIPTION:
             raise ValueError("No chunks generated from text")
         
         # Create DocumentChunk rows
-        logger.info(f"Creating {len(chunks_info)} document chunks for document {document.id}")
+        logger.info(f"📄 [INDEXING] Document {document.id} - Step 4/5: Saving chunks to database...")
         chunk_objects = []
         try:
             for chunk_data in chunks_info:
@@ -332,14 +340,14 @@ DETAILED DESCRIPTION:
                 chunk_objects.append(chunk)
             
             db.commit()
-            logger.info(f"Created {len(chunk_objects)} document chunks for document {document.id}")
+            logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Saved {len(chunk_objects)} chunk(s) to database")
         except Exception as e:
             logger.error(f"Failed to create document chunks for document {document.id}: {e}", exc_info=True)
             db.rollback()
             raise ValueError(f"Failed to create document chunks: {str(e)}")
         
         # Compute embeddings
-        logger.info(f"Computing embeddings for document {document.id}")
+        logger.info(f"📄 [INDEXING] Document {document.id} - Step 5/5: Generating embeddings for {len(chunk_objects)} chunk(s)...")
         embeddings = None
         try:
             if is_image:
@@ -354,26 +362,39 @@ DETAILED DESCRIPTION:
                 # provider as text documents, ensuring consistent dimensions.
                 chunk_texts = [chunk.text for chunk in chunk_objects]
                 try:
-                    logger.info(f"[IMAGE] Generating text embeddings for {len(chunk_texts)} image description chunks")
+                    logger.info(f"📄 [INDEXING] Document {document.id} - Generating text embeddings for {len(chunk_texts)} image description chunk(s)...")
                     embeddings = await asyncio.wait_for(
                         embeddings_provider.embed_documents(chunk_texts),
-                        timeout=30.0
+                        timeout=15.0  # Reduced from 30s to 15s for faster processing
                     )
                     if embeddings and len(embeddings) > 0:
-                        logger.info(f"Generated {len(embeddings)} text embeddings for document {document.id} (dimension: {len(embeddings[0]) if embeddings else 0})")
+                        emb_dim = len(embeddings[0]) if embeddings else 0
+                        logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Generated {len(embeddings)} embedding(s) (dimension: {emb_dim})")
                     else:
                         logger.error(f"No embeddings generated for document {document.id}")
                         raise ValueError("No embeddings generated")
                 except asyncio.TimeoutError:
-                    logger.error(f"[IMAGE] Text embedding generation timed out after 30 seconds for document {document.id}")
+                    logger.error(f"📄 [INDEXING] Document {document.id} - ✗ Embedding generation timed out after 15 seconds")
                     raise ValueError("Embedding generation timed out")
                 except Exception as e:
-                    logger.error(f"[IMAGE] Text embedding generation failed for document {document.id}: {e}", exc_info=True)
+                    logger.error(f"📄 [INDEXING] Document {document.id} - ✗ Embedding generation failed: {e}", exc_info=True)
                     raise ValueError(f"Failed to generate embeddings: {str(e)}")
             else:
                 # For text: Use text embeddings
                 chunk_texts = [chunk.text for chunk in chunk_objects]
-                embeddings = await embeddings_provider.embed_documents(chunk_texts)
+                logger.info(f"📄 [INDEXING] Document {document.id} - Generating embeddings for {len(chunk_texts)} text chunk(s)...")
+                try:
+                    embeddings = await asyncio.wait_for(
+                        embeddings_provider.embed_documents(chunk_texts),
+                        timeout=30.0  # 30 seconds timeout for text embeddings
+                    )
+                    logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Generated {len(embeddings)} embedding(s)")
+                except asyncio.TimeoutError:
+                    logger.error(f"📄 [INDEXING] Document {document.id} - ✗ Embedding generation timed out after 30 seconds")
+                    raise ValueError("Embedding generation timed out")
+                except Exception as e:
+                    logger.error(f"📄 [INDEXING] Document {document.id} - ✗ Embedding generation failed: {e}", exc_info=True)
+                    raise ValueError(f"Failed to generate embeddings: {str(e)}")
             
             if not embeddings or len(embeddings) == 0:
                 logger.error(f"No embeddings generated for document {document.id}")
@@ -381,14 +402,12 @@ DETAILED DESCRIPTION:
             if len(embeddings) != len(chunk_objects):
                 logger.error(f"Embedding count mismatch for document {document.id}: {len(embeddings)} embeddings for {len(chunk_objects)} chunks")
                 raise ValueError(f"Embedding count mismatch: {len(embeddings)} embeddings for {len(chunk_objects)} chunks")
-            
-            logger.info(f"Generated {len(embeddings)} embeddings for document {document.id}")
         except Exception as e:
             logger.error(f"Failed to generate embeddings for document {document.id}: {e}", exc_info=True)
             raise ValueError(f"Failed to generate embeddings: {str(e)}")
         
         # Add to vector store
-        logger.info(f"Adding to vector store for document {document.id}")
+        logger.info(f"📄 [INDEXING] Document {document.id} - Adding {len(chunk_objects)} chunk(s) to vector store...")
         try:
             chunk_ids = [chunk.id for chunk in chunk_objects]
             vector_store.add_document_chunks(
@@ -397,7 +416,7 @@ DETAILED DESCRIPTION:
                 embeddings=embeddings,
                 chunk_ids=chunk_ids
             )
-            logger.info(f"Added {len(chunk_ids)} chunks to vector store for document {document.id}")
+            logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Added {len(chunk_ids)} chunk(s) to vector store")
         except Exception as e:
             logger.error(f"Failed to add chunks to vector store for document {document.id}: {e}", exc_info=True)
             raise ValueError(f"Failed to index document in vector store: {str(e)}")
@@ -408,7 +427,8 @@ DETAILED DESCRIPTION:
             document.status = DocumentStatus.READY
             db.commit()
             db.refresh(document)
-            logger.info(f"Document {document.id} status transition: INDEXING → READY")
+            logger.info(f"✅ [INDEXING] Document {document.id} ('{document.title}') - Status changed to READY")
+            logger.info(f"✅ [INDEXING] Document {document.id} - Indexing completed successfully! ({len(chunks_info)} chunk(s))")
         except Exception as e:
             logger.error(f"CRITICAL: Failed to update document {document.id} status to READY: {e}", exc_info=True)
             # This is critical - try to set FAILED as fallback

@@ -1,4 +1,5 @@
 import { ChatMessage } from '../../api/chat';
+import { MarkdownContent } from './MarkdownContent';
 
 interface ChatMessageBubbleProps {
   message: ChatMessage;
@@ -16,13 +17,18 @@ export function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
             : 'glass dark:glass-dark backdrop-blur-md bg-white/90 dark:bg-gray-700/90 text-gray-900 dark:text-gray-100 rounded-bl-sm border border-gray-200/60 dark:border-gray-600/60 hover:bg-white/95 dark:hover:bg-gray-700/95'
         }`}
       >
-        <div className="prose prose-sm dark:prose-invert max-w-none">
-          <p className="whitespace-pre-wrap break-words text-sm md:text-base leading-relaxed">{message.content}</p>
+        <div className="prose prose-sm dark:prose-invert max-w-none text-sm md:text-base">
+          {isUser ? (
+            <p className="whitespace-pre-wrap break-words leading-relaxed">{message.content}</p>
+          ) : (
+            <MarkdownContent content={message.content} isUser={isUser} />
+          )}
         </div>
         {message.retrieved_chunks && message.retrieved_chunks.length > 0 && (
           <div className="mt-3 pt-3 border-t border-opacity-20 dark:border-opacity-30">
-            <p className="text-xs opacity-80 font-medium">
-              📚 Sources: {message.retrieved_chunks.length} document{message.retrieved_chunks.length > 1 ? 's' : ''}
+            <p className="text-xs opacity-80 font-medium flex items-center gap-1.5">
+              <span className="text-base">📚</span>
+              <span>Sources: {message.retrieved_chunks.length} document{message.retrieved_chunks.length > 1 ? 's' : ''}</span>
             </p>
           </div>
         )}

@@ -14,6 +14,8 @@ chromadb==0.4.18
 openai==1.3.0
 groq==0.4.1
 sentence-transformers==2.2.2
+transformers>=4.30.0  # For local BLIP image captioning model
+torch>=2.0.0  # For local BLIP image captioning model (CPU version)
 passlib[bcrypt]==1.7.4
 python-jose[cryptography]==3.3.0
 boto3==1.29.7

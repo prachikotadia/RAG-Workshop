@@ -126,16 +126,42 @@ async def upload_documents(
             # It GUARANTEES status will be READY or FAILED
             document = None
             try:
-                document = await process_and_index_document(
-                    db=db,
-                    user=current_user,
-                    upload_file=file,
-                    embeddings_provider=embeddings_provider,
-                    vector_store=vector_store
-                )
-                # Document status is already READY or FAILED at this point
-                documents.append(document)
-                logger.info(f"Document {document.id} processed with status: {document.status}")
+                import asyncio
+                # Add hard timeout wrapper to prevent hanging
+                try:
+                    document = await asyncio.wait_for(
+                        process_and_index_document(
+                            db=db,
+                            user=current_user,
+                            upload_file=file,
+                            embeddings_provider=embeddings_provider,
+                            vector_store=vector_store
+                        ),
+                        timeout=20.0  # Reduced to 20s for faster response
+                    )
+                    # Document status is already READY or FAILED at this point
+                    documents.append(document)
+                    logger.info(f"Document {document.id} processed with status: {document.status}")
+                except asyncio.TimeoutError:
+                    logger.error(f"CRITICAL: Document processing timed out after 30 seconds for {file.filename}")
+                    # Find the document and mark it as FAILED
+                    try:
+                        from app.db import models
+                        from app.db.schemas import DocumentStatus
+                        stuck_doc = db.query(models.Document).filter(
+                            models.Document.user_id == current_user.id,
+                            models.Document.status == DocumentStatus.INDEXING
+                        ).order_by(models.Document.created_at.desc()).first()
+                        if stuck_doc:
+                            stuck_doc.status = DocumentStatus.FAILED
+                            db.commit()
+                            logger.info(f"Marked stuck document {stuck_doc.id} as FAILED due to timeout")
+                    except Exception as fix_error:
+                        logger.error(f"Failed to fix stuck document: {fix_error}", exc_info=True)
+                    raise HTTPException(
+                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                        detail=f"Document processing timed out after 30 seconds. Please try again."
+                    )
             except HTTPException as http_exc:
                 # HTTPException from process_and_index_document means document is already marked as FAILED
                 # Re-raise to return proper error to client

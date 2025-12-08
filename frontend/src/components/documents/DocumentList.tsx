@@ -17,6 +17,18 @@ export function DocumentList({ onRefresh }: { onRefresh?: number }) {
     listApi.execute();
   }, [onRefresh]);
 
+  // Auto-refresh every 3 seconds if there are documents with INDEXING status
+  useEffect(() => {
+    const hasIndexing = listApi.data?.some(doc => doc.status === 'INDEXING');
+    if (hasIndexing) {
+      const interval = setInterval(() => {
+        listApi.execute();
+      }, 3000); // Refresh every 3 seconds while indexing
+      return () => clearInterval(interval);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listApi.data]);
+
   const handleDelete = (id: number) => {
     setDocumentToDelete(id);
     setDeleteModalOpen(true);

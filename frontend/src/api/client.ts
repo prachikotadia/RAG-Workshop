@@ -163,9 +163,9 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    // Create AbortController for timeout (6 minutes for image processing)
+    // Create AbortController for timeout (45 seconds for fast processing)
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 360000); // 6 minutes
+    const timeoutId = setTimeout(() => controller.abort(), 45000); // 45 seconds (backend max is 30s, but allow buffer)
 
     try {
       const response = await fetch(url, {
@@ -207,7 +207,7 @@ class ApiClient {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
         throw {
-          detail: 'Request timeout. Image processing is taking longer than expected. Please try again.',
+          detail: 'Request timeout after 45 seconds. The document may still be processing. Please refresh the page to check status.',
           status: 0,
         } as ApiError;
       }

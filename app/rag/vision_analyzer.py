@@ -157,6 +157,25 @@ Write in natural, conversational language. Use 4-6 sentences. Be very specific a
             
             analysis_text = response.choices[0].message.content
             
+            # Check if OpenAI refused to analyze (content policy)
+            refusal_phrases = [
+                "i'm unable to assist",
+                "i cannot",
+                "i can't",
+                "i'm not able",
+                "unable to assist",
+                "cannot analyze",
+                "content policy",
+                "safety guidelines",
+                "i apologize, but",
+                "i'm sorry, but i cannot"
+            ]
+            
+            if any(phrase in analysis_text.lower() for phrase in refusal_phrases):
+                logger.warning(f"OpenAI refused to analyze image {image_path.name} - likely content policy restriction")
+                # Raise an exception to trigger fallback to local analysis
+                raise ValueError(f"OpenAI content policy restriction: {analysis_text}")
+            
             # Extract structured information from the analysis
             analysis_lower = analysis_text.lower()
             

@@ -15,8 +15,13 @@ export function DocumentUpload({ onUploadSuccess }: DocumentUploadProps) {
     }
 
     try {
-      await uploadApi.execute(files);
+      const result = await uploadApi.execute(files);
+      // Immediately refresh the list after upload
       onUploadSuccess();
+      // Also trigger a refresh after a short delay to catch any documents still processing
+      setTimeout(() => {
+        onUploadSuccess();
+      }, 2000);
     } catch (err) {
       // Error is handled by useApi hook
     }

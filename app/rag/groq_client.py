@@ -51,7 +51,19 @@ class GroqLlmClient(LlmClient):
             
             return response.choices[0].message.content
         
-        return await retry_async(_generate, max_retries=3, exceptions=(Exception,))
+        try:
+            # Add timeout to prevent hanging
+            import asyncio
+            return await asyncio.wait_for(
+                retry_async(_generate, max_retries=2, exceptions=(Exception,)),  # Reduced retries
+                timeout=30.0  # 30 second timeout for LLM generation
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"Groq LLM generation timed out after 30 seconds")
+            raise TimeoutError("LLM generation timed out")
+        except Exception as e:
+            logger.error(f"Error generating Groq LLM response: {e}", exc_info=True)
+            raise
 
 
 class LocalLlmClient(LlmClient):
@@ -104,5 +116,17 @@ class LocalLlmClient(LlmClient):
             
             return response.choices[0].message.content
         
-        return await retry_async(_generate, max_retries=3, exceptions=(Exception,))
+        try:
+            # Add timeout to prevent hanging
+            import asyncio
+            return await asyncio.wait_for(
+                retry_async(_generate, max_retries=2, exceptions=(Exception,)),  # Reduced retries
+                timeout=30.0  # 30 second timeout for LLM generation
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"Local LLM generation timed out after 30 seconds")
+            raise TimeoutError("LLM generation timed out")
+        except Exception as e:
+            logger.error(f"Error generating Local LLM response: {e}", exc_info=True)
+            raise
 

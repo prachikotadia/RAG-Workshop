@@ -1,3 +1,11 @@
+# CRITICAL: Set thread limits BEFORE importing any PyTorch/ML libraries
+# This prevents OpenMP crashes from threading conflicts
+import os
+os.environ.setdefault('OMP_NUM_THREADS', '1')
+os.environ.setdefault('MKL_NUM_THREADS', '1')
+os.environ.setdefault('NUMEXPR_NUM_THREADS', '1')
+os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
+
 from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,22 +36,48 @@ def create_app() -> FastAPI:
     )
 
     # CORS middleware - MUST be first, before any other middleware
-    # Explicitly allow all common dev origins
-    cors_origins = [
-        "http://127.0.0.1:3000",  # Frontend default port
-        "http://127.0.0.1:3001",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",  # Keep for compatibility
-        "http://localhost:3001",
-        "http://localhost:5173",
-    ]
-    
-    # Add any additional origins from config
-    if settings.cors_origins != "*" and settings.cors_origins:
-        additional = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
-        cors_origins.extend(additional)
-    
-    logger.info(f"CORS configured with allowed origins: {cors_origins}")
+    # In dev mode, allow common localhost/127.0.0.1 origins (comprehensive port list)
+    # In production, use configured origins
+    if settings.environment == "dev":
+        # In dev, allow common localhost and 127.0.0.1 origins with various ports
+        # Generate common dev ports (3000-3010, 5173-5180, 8080-8090, etc.)
+        cors_origins = []
+        # Common Vite/React ports
+        for port in range(3000, 3011):  # 3000-3010
+            cors_origins.extend([
+                f"http://127.0.0.1:{port}",
+                f"http://localhost:{port}",
+            ])
+        # Vite default port range
+        for port in range(5173, 5181):  # 5173-5180
+            cors_origins.extend([
+                f"http://127.0.0.1:{port}",
+                f"http://localhost:{port}",
+            ])
+        # Other common dev ports
+        for port in [8080, 8081, 8082, 5000, 5001, 4000, 4001]:
+            cors_origins.extend([
+                f"http://127.0.0.1:{port}",
+                f"http://localhost:{port}",
+            ])
+        logger.info(f"CORS configured to allow localhost origins on common dev ports (dev mode) - {len(cors_origins)} origins")
+    else:
+        # In production, use explicit list
+        cors_origins = [
+            "http://127.0.0.1:3000",  # Frontend default port
+            "http://127.0.0.1:3001",
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",  # Keep for compatibility
+            "http://localhost:3001",
+            "http://localhost:5173",
+        ]
+        
+        # Add any additional origins from config
+        if settings.cors_origins != "*" and settings.cors_origins:
+            additional = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
+            cors_origins.extend(additional)
+        
+        logger.info(f"CORS configured with allowed origins: {cors_origins}")
     
     app.add_middleware(
         CORSMiddleware,
@@ -53,6 +87,33 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         expose_headers=["*"],
     )
+    
+    # Additional CORS handler for dev mode - allows any localhost/127.0.0.1 origin
+    if settings.environment == "dev":
+        from starlette.middleware.base import BaseHTTPMiddleware as BaseMiddleware
+        
+        class DevCORSMiddleware(BaseMiddleware):
+            """Additional CORS middleware for dev mode to allow any localhost/127.0.0.1 origin."""
+            async def dispatch(self, request, call_next):
+                origin = request.headers.get("origin")
+                
+                # Allow any localhost or 127.0.0.1 origin in dev mode
+                if origin and (origin.startswith("http://localhost:") or 
+                              origin.startswith("http://127.0.0.1:") or
+                              origin.startswith("https://localhost:") or
+                              origin.startswith("https://127.0.0.1:")):
+                    response = await call_next(request)
+                    # Add CORS headers if not already present
+                    if "Access-Control-Allow-Origin" not in response.headers:
+                        response.headers["Access-Control-Allow-Origin"] = origin
+                        response.headers["Access-Control-Allow-Credentials"] = "true"
+                        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+                        response.headers["Access-Control-Allow-Headers"] = "*"
+                    return response
+                
+                return await call_next(request)
+        
+        app.add_middleware(DevCORSMiddleware)
     
     # Request ID middleware (after CORS)
     app.add_middleware(RequestIDMiddleware)
@@ -84,16 +145,16 @@ def create_app() -> FastAPI:
         async def dispatch(self, request: Request, call_next):
             # Set a longer timeout for upload endpoints only
             if request.url.path.startswith("/documents/upload"):
-                # Allow up to 5 minutes for image processing (lightweight analysis is fast, but keeping timeout for safety)
+                # Allow up to 25 seconds for upload (matches processing timeout + buffer)
                 import asyncio
                 try:
-                    response = await asyncio.wait_for(call_next(request), timeout=300.0)
+                    response = await asyncio.wait_for(call_next(request), timeout=25.0)
                     return response
                 except asyncio.TimeoutError:
                     logger.error(f"Request timeout for {request.url.path}")
                     timeout_response = JSONResponse(
                         status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                        content={"detail": "Request timeout. Image processing took too long."}
+                        content={"detail": "Request timeout. Document processing exceeded 30 seconds. The document may still be processing in the background - please refresh to check status."}
                     )
                     return add_cors_to_timeout_response(timeout_response, request)
             elif request.url.path.startswith("/chat/"):
@@ -107,6 +168,19 @@ def create_app() -> FastAPI:
                     timeout_response = JSONResponse(
                         status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                         content={"detail": "Request timeout. Image analysis or processing took too long."}
+                    )
+                    return add_cors_to_timeout_response(timeout_response, request)
+            elif request.url.path.startswith("/auth/"):
+                # Auth endpoints (login, signup, etc.) - longer timeout to handle busy backend
+                import asyncio
+                try:
+                    response = await asyncio.wait_for(call_next(request), timeout=60.0)
+                    return response
+                except asyncio.TimeoutError:
+                    logger.error(f"Request timeout for {request.url.path}")
+                    timeout_response = JSONResponse(
+                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                        content={"detail": "Request timeout. Backend may be busy. Please try again."}
                     )
                     return add_cors_to_timeout_response(timeout_response, request)
             else:
@@ -211,21 +285,27 @@ def create_app() -> FastAPI:
         return response
 
     # Startup event - initialize database tables (for dev environment)
+    # Run in background to not block startup
     @app.on_event("startup")
     async def startup_event():
-        try:
-            from app.db.base import engine, Base
-            # Import all models to ensure they're registered with Base
-            from app.db import models  # noqa: F401
-            
-            # Only create tables in dev environment
-            if settings.environment == "dev":
-                Base.metadata.create_all(bind=engine)
-                logger.info("Database tables initialized (dev mode)")
-            else:
-                logger.info("Skipping table creation (production mode - use migrations)")
-        except Exception as e:
-            logger.error(f"Error initializing database: {e}")
+        async def init_db():
+            try:
+                from app.db.base import engine, Base
+                # Import all models to ensure they're registered with Base
+                from app.db import models  # noqa: F401
+                
+                # Only create tables in dev environment
+                if settings.environment == "dev":
+                    Base.metadata.create_all(bind=engine)
+                    logger.info("Database tables initialized (dev mode)")
+                else:
+                    logger.info("Skipping table creation (production mode - use migrations)")
+            except Exception as e:
+                logger.error(f"Error initializing database: {e}")
+        
+        # Run in background - don't block startup
+        import asyncio
+        asyncio.create_task(init_db())
 
     # Explicit OPTIONS handler for all routes (CORS preflight)
     @app.options("/{full_path:path}")
@@ -263,3 +343,12 @@ def create_app() -> FastAPI:
 
 app = create_app()
 
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True
+    )

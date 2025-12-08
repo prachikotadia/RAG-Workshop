@@ -238,6 +238,7 @@ async def send_message(
         HTTPException: 404 if session not found or not owned by user
     """
     import logging
+    import asyncio
     logger = logging.getLogger(__name__)
     
     # Validate input
@@ -255,14 +256,24 @@ async def send_message(
             llm_client=llm_client,
         )
         
-        # Handle user message through RAG pipeline
-        _, assistant_msg, _ = await handle_user_message(
-            db=db,
-            user=current_user,
-            session_id=session_id,
-            question=payload.content.strip(),
-            rag_chain=rag_chain,
-        )
+        # Handle user message through RAG pipeline with timeout
+        try:
+            _, assistant_msg, _ = await asyncio.wait_for(
+                handle_user_message(
+                    db=db,
+                    user=current_user,
+                    session_id=session_id,
+                    question=payload.content.strip(),
+                    rag_chain=rag_chain,
+                ),
+                timeout=60.0  # 60 second timeout for RAG processing
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"RAG processing timed out for session {session_id}")
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="Request timed out. The question may be too complex or the system is busy. Please try again with a simpler question."
+            )
         
         # Validate response
         if not assistant_msg or not assistant_msg.content:
@@ -275,8 +286,15 @@ async def send_message(
         return ChatMessageRead.model_validate(assistant_msg)
         
     except HTTPException:
-        # Re-raise HTTP exceptions
+        # Re-raise HTTP exceptions (they already have proper responses)
         raise
+    except asyncio.TimeoutError:
+        # Timeout errors should already be caught above, but catch here as well
+        logger.error(f"Timeout in send_message endpoint for session {session_id}")
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Request timed out. Please try again with a simpler question."
+        )
     except RuntimeError as e:
         # RuntimeError usually means missing configuration (API keys, etc.)
         logger.error(f"Configuration error in send_message endpoint: {e}", exc_info=True)
@@ -285,10 +303,12 @@ async def send_message(
             detail=f"Configuration error: {str(e)}. Please check your .env file and ensure API keys are set."
         )
     except Exception as e:
-        logger.error(f"Error in send_message endpoint: {e}", exc_info=True)
+        # Catch-all for any other exceptions - ensure we always return a response
+        logger.error(f"Unexpected error in send_message endpoint: {e}", exc_info=True)
         error_msg = str(e)
         if len(error_msg) > 200:
             error_msg = error_msg[:200] + "..."
+        # Always return a proper HTTP response, never let connection close empty
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing message: {error_msg}"
