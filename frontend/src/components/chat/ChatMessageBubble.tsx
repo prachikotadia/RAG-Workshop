@@ -1,38 +1,37 @@
 import { ChatMessage } from '../../api/chat';
 import { MarkdownContent } from './MarkdownContent';
+import { CitationList } from './CitationList';
 
 interface ChatMessageBubbleProps {
   message: ChatMessage;
+  query?: string; // Query string for citation highlighting
 }
 
-export function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
+export function ChatMessageBubble({ message, query }: ChatMessageBubbleProps) {
   const isUser = message.role === 'user';
 
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4 md:mb-5 group`}>
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4 md:mb-5 group animate-fade-in`}>
       <div
-        className={`max-w-[85%] sm:max-w-[75%] md:max-w-[70%] lg:max-w-[65%] rounded-2xl px-5 py-4 md:px-6 md:py-5 shadow-lg hover:shadow-xl transition-all duration-300 hover-lift ${
+        className={`max-w-[85%] sm:max-w-[75%] md:max-w-[70%] lg:max-w-[65%] rounded-2xl px-5 py-4 md:px-6 md:py-5 transition-all duration-200 hover-lift ${
           isUser
-            ? 'bg-gradient-to-br from-blue-600 via-blue-500 to-purple-600 text-white dark:from-blue-500 dark:via-blue-400 dark:to-purple-500 rounded-br-sm hover:from-blue-700 hover:via-blue-600 hover:to-purple-700'
-            : 'glass dark:glass-dark backdrop-blur-md bg-white/90 dark:bg-gray-700/90 text-gray-900 dark:text-gray-100 rounded-bl-sm border border-gray-200/60 dark:border-gray-600/60 hover:bg-white/95 dark:hover:bg-gray-700/95'
+            ? 'bg-blue-500 dark:bg-blue-400 text-white rounded-br-sm shadow-soft'
+            : 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-bl-sm border border-gray-200 dark:border-gray-700 shadow-soft'
         }`}
       >
-        <div className="prose prose-sm dark:prose-invert max-w-none text-sm md:text-base">
+        <div className="relative z-10 prose prose-sm dark:prose-invert max-w-none text-sm md:text-base">
           {isUser ? (
-            <p className="whitespace-pre-wrap break-words leading-relaxed">{message.content}</p>
+            <p className="whitespace-pre-wrap break-words leading-relaxed font-medium">{message.content}</p>
           ) : (
             <MarkdownContent content={message.content} isUser={isUser} />
           )}
         </div>
         {message.retrieved_chunks && message.retrieved_chunks.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-opacity-20 dark:border-opacity-30">
-            <p className="text-xs opacity-80 font-medium flex items-center gap-1.5">
-              <span className="text-base">📚</span>
-              <span>Sources: {message.retrieved_chunks.length} document{message.retrieved_chunks.length > 1 ? 's' : ''}</span>
-            </p>
+          <div className="mt-3 pt-3 border-t border-white/20 dark:border-gray-600/30">
+            <CitationList citations={message.retrieved_chunks} query={query} />
           </div>
         )}
-        <div className={`mt-2 text-xs opacity-70 ${isUser ? 'text-blue-100 dark:text-blue-200' : 'text-gray-500 dark:text-gray-400'}`}>
+        <div className={`mt-2 text-xs opacity-80 font-medium relative z-10 ${isUser ? 'text-blue-100 dark:text-blue-200' : 'text-gray-500 dark:text-gray-400'}`}>
           {new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </div>
       </div>

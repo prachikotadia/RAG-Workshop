@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authApi, User } from '../api/auth';
 import { ApiError } from '../api/client';
+import { Storage } from '../utils/storage';
 
 interface UseAuthReturn {
   user: User | null;
@@ -23,7 +24,7 @@ export function useAuth(): UseAuthReturn {
   const navigate = useNavigate();
 
   const fetchCurrentUser = useCallback(async () => {
-    const currentToken = token || localStorage.getItem('access_token');
+    const currentToken = token || Storage.getToken();
     if (!currentToken) {
       setLoading(false);
       return;
@@ -48,12 +49,16 @@ export function useAuth(): UseAuthReturn {
         setToken(currentToken);
       }
       setError(null); // Clear any previous errors on success
+      
+      // Cache user data on successful fetch
+      Storage.setSessionData({ user: currentUser });
     } catch (err) {
       const apiError = err as ApiError;
       
       // Only clear token and redirect on 401 (unauthorized), not on timeout/network errors
       if (apiError.status === 401) {
-        localStorage.removeItem('access_token');
+        Storage.removeToken();
+        Storage.clearSession();
         setToken(null);
         setUser(null);
         setError(null);
@@ -70,13 +75,26 @@ export function useAuth(): UseAuthReturn {
 
   // Load token from localStorage on mount and fetch user
   useEffect(() => {
-    const storedToken = localStorage.getItem('access_token');
+    const storedToken = Storage.getToken();
+    const sessionData = Storage.getSessionData();
+    
     if (storedToken) {
       setToken(storedToken);
+      // If we have cached user data, use it immediately for better UX
+      if (sessionData?.user) {
+        setUser(sessionData.user);
+        setLoading(false);
+      }
       // Fetch user in background - don't block UI
-      fetchCurrentUser().catch(() => {
-        // Silently handle errors - user can still use app
-      });
+      fetchCurrentUser()
+        .then(() => {
+          // Cache user data on successful fetch
+          // Note: user state is updated in fetchCurrentUser, so we check it here
+          // We'll update cache after user state is set
+        })
+        .catch(() => {
+          // Silently handle errors - user can still use app with cached data
+        });
     } else {
       setLoading(false);
     }
@@ -128,37 +146,48 @@ export function useAuth(): UseAuthReturn {
       // Normalize email (case-insensitive)
       const normalizedEmail = email.toLowerCase().trim();
       
-      // Login request
-      const response = await authApi.login(normalizedEmail, password);
+      // Login request with timeout wrapper for extra safety
+      const loginPromise = authApi.login(normalizedEmail, password);
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject({ detail: 'Login request timed out. Please check your connection and try again.', status: 0 } as ApiError), 12000)
+      );
+      
+      const response = await Promise.race([loginPromise, timeoutPromise]);
       
       if (!response || !response.access_token) {
         throw { detail: 'Invalid response from server', status: 500 } as ApiError;
       }
       
       // Store token
-      localStorage.setItem('access_token', response.access_token);
+      Storage.setToken(response.access_token);
       setToken(response.access_token);
 
       // Fetch user info with retry
       try {
         const currentUser = await authApi.getCurrentUser();
         setUser(currentUser);
+        // Cache user data
+        Storage.setSessionData({ user: currentUser });
       } catch (userErr) {
         // If getCurrentUser fails, still allow login (token is valid)
-        setUser({
+        const fallbackUser = {
           id: 0,
           email: normalizedEmail,
           created_at: new Date().toISOString(),
-        });
+        };
+        setUser(fallbackUser);
+        Storage.setSessionData({ user: fallbackUser });
       }
 
       // Ensure state is updated before navigation
       setLoading(false);
+      setError(null);
       
       // Navigate to documents after a brief delay to ensure state updates
-      setTimeout(() => {
+      // Use requestAnimationFrame for better timing
+      requestAnimationFrame(() => {
         navigate('/documents', { replace: true });
-      }, 100);
+      });
     } catch (err) {
       const apiError = err as ApiError;
       let errorMessage = 'Login failed. Please check your credentials.';
@@ -173,7 +202,11 @@ export function useAuth(): UseAuthReturn {
       
       // Provide helpful error messages
       if (apiError.status === 0) {
-        errorMessage = 'Cannot connect to server. Please make sure the backend is running on port 8000.';
+        if (typeof apiError.detail === 'string' && apiError.detail.includes('timeout')) {
+          errorMessage = apiError.detail;
+        } else {
+          errorMessage = 'Cannot connect to server. Please make sure the backend is running on port 8000.';
+        }
       } else if (apiError.status === 401) {
         errorMessage = 'Incorrect email or password. Please try again.';
       } else if (apiError.status === 500) {
@@ -216,10 +249,15 @@ export function useAuth(): UseAuthReturn {
   }, [login]);
 
   const logout = useCallback(() => {
-    localStorage.removeItem('access_token');
+    // Clear all auth-related data
+    Storage.removeToken();
+    Storage.clearSession();
     setToken(null);
     setUser(null);
-    navigate('/login');
+    setError(null);
+    setLoading(false);
+    // Navigate to login
+    navigate('/login', { replace: true });
   }, [navigate]);
 
   return {
@@ -231,7 +269,7 @@ export function useAuth(): UseAuthReturn {
     signup,
     logout,
     fetchCurrentUser,
-    isAuthenticated: !!token || !!localStorage.getItem('access_token'),
+    isAuthenticated: !!token || !!Storage.getToken(),
   };
 }
 

@@ -1,8 +1,4 @@
-"""
-RAG chain implementation.
-
-Core orchestrator for RAG pipeline (embed → search → context → LLM).
-"""
+# RAG chain - handles embedding, search, context building, and LLM calls
 from abc import ABC, abstractmethod
 from typing import List, Dict, Tuple, Any
 from sqlalchemy.orm import Session
@@ -14,30 +10,36 @@ from app.vectorstore.faiss_store import VectorStore, VectorHit
 from app.rag.context_builder import build_context
 from app.rag.prompts import build_messages
 from app.rag.image_analyzer import analyze_image, scan_image_comprehensively
+from app.rag.advanced_rag import (
+    hybrid_search,
+    expand_query,
+    rerank_results,
+    compress_context,
+)
+from app.rag.confidence import calculate_confidence_score, fact_check_answer
 from app.db import models
 from app.chat.history import get_recent_messages
 from app.config import get_settings
 from app.utils.retry import retry_async
 from pathlib import Path
+import numpy as np
+import asyncio
 
 logger = logging.getLogger(__name__)
 
 
 class LlmClient(ABC):
-    """Abstract interface for LLM calls."""
-    
+    # Base class for LLM clients
+
     @abstractmethod
     async def generate(self, messages: List[Dict[str, str]]) -> str:
-        """
-        Given chat messages, return the assistant response text.
-        
-        Args:
-            messages: List of message dicts with 'role' and 'content' keys
-        
-        Returns:
-            Assistant response text as string
-        """
+        # Generate response from chat messages
         pass
+    
+    async def stream(self, messages: List[Dict[str, str]]):
+        # Stream response tokens
+        response = await self.generate(messages)
+        yield response
 
 
 class OpenAILlmClient(LlmClient):
@@ -105,6 +107,45 @@ class OpenAILlmClient(LlmClient):
         except Exception as e:
             logger.error(f"Error generating LLM response: {e}", exc_info=True)
             raise
+    
+    async def stream(self, messages: List[Dict[str, str]]):
+        """
+        Stream response tokens from OpenAI chat completion API.
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content' keys
+        
+        Yields:
+            Response text chunks as strings
+        """
+        client = self._get_client()
+        
+        async def _stream():
+            import asyncio
+            loop = asyncio.get_event_loop()
+            # Use streaming API
+            stream = await loop.run_in_executor(
+                None,
+                lambda: client.chat.completions.create(
+                    model=self._model,
+                    messages=messages,
+                    temperature=0.8,
+                    top_p=0.9,
+                    stream=True
+                )
+            )
+            
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        
+        try:
+            import asyncio
+            async for chunk in _stream():
+                yield chunk
+        except Exception as e:
+            logger.error(f"Error streaming LLM response: {e}", exc_info=True)
+            raise
 
 
 class RagChain:
@@ -164,19 +205,73 @@ class RagChain:
             Tuple of (answer_text, citations_list, analysis_info)
             analysis_info contains image analysis data if images were analyzed
         """
-        # 1. Embed query
-        logger.debug(f"Embedding query for user {user.id}, session {session.id}")
-        query_vec = await self._embeddings.embed_query(question)
-        logger.debug(f"Generated query embedding (dimension: {len(query_vec)})")
+        # 1. Advanced RAG: Multi-query retrieval (if enabled)
+        settings = get_settings()
         
-        # 2. Search vector store
-        logger.debug(f"Searching vector store for user {user.id} with top_k={top_k}")
+        # Check cache for query embedding first
+        from app.utils.cache import get_cached_embedding, set_cached_embedding
+        cached_embedding = get_cached_embedding(question, user.id, ttl=86400)  # 24 hour TTL for embeddings
+        
+        if cached_embedding:
+            logger.debug(f"Using cached embedding for user {user.id}")
+            query_vectors = [cached_embedding]
+        else:
+            query_vectors = [await self._embeddings.embed_query(question)]
+            # Cache the embedding
+            set_cached_embedding(question, user.id, query_vectors[0], ttl=86400)
+        
+        if settings.enable_multi_query:
+            try:
+                logger.debug(f"Generating multiple query variations for user {user.id}")
+                expanded_queries = expand_query(question)
+                if len(expanded_queries) > 1:
+                    for expanded_q in expanded_queries[1:3]:  # Use top 2 additional variations
+                        try:
+                            vec = await self._embeddings.embed_query(expanded_q)
+                            query_vectors.append(vec)
+                        except Exception as e:
+                            logger.warning(f"Failed to embed expanded query: {e}")
+                    logger.info(f"Generated {len(query_vectors)} query variations")
+            except Exception as e:
+                logger.warning(f"Multi-query expansion failed: {e}, using single query")
+        
+        # Use first query vector for initial search (or average if multiple)
+        if len(query_vectors) > 1:
+            try:
+                query_vec = np.mean(query_vectors, axis=0).tolist()
+            except Exception as e:
+                logger.warning(f"Failed to average query vectors: {e}, using first vector")
+                query_vec = query_vectors[0]
+        else:
+            query_vec = query_vectors[0]
+        
+        logger.debug(f"Embedded query for user {user.id}, session {session.id} (dimension: {len(query_vec)})")
+        
+        # 2. Search vector store (get more results for re-ranking)
+        search_k = top_k * 2 if settings.enable_reranking else top_k
+        logger.debug(f"Searching vector store for user {user.id} with top_k={search_k}")
         hits = self._vector_store.search(
             user_id=user.id,
             query_vector=query_vec,
-            k=top_k
+            k=search_k
         )
         logger.info(f"Found {len(hits)} relevant chunks for user {user.id}")
+        
+        # 2b. Advanced RAG: Hybrid search (if enabled)
+        if settings.enable_hybrid_search and hits:
+            try:
+                logger.debug(f"Applying hybrid search (vector + keyword) for user {user.id}")
+                hits = hybrid_search(
+                    db=db,
+                    user_id=user.id,
+                    query=question,
+                    vector_hits=hits,
+                    top_k=search_k,
+                    alpha=settings.hybrid_search_alpha
+                )
+                logger.info(f"Hybrid search completed: {len(hits)} results")
+            except Exception as e:
+                logger.warning(f"Hybrid search failed: {e}, using vector search only")
         
         if not hits:
             # If no chunks found but question is about images, try to find any image documents
@@ -308,6 +403,8 @@ CLIP Embedding: Generated ({deep_analysis.get('clip_embedding_dim', 0)} dimensio
                                 "image_analyses": [{"analysis_text": analysis} for analysis in image_analyses],
                                 "has_analysis": True
                             }
+                            analysis_info = analysis_info or {}
+                            analysis_info["confidence_score"] = 0.7  # Lower confidence for image-only answers
                             return answer, [], analysis_info
                     except Exception as e:
                         logger.warning(f"Error processing image documents: {e}, falling back to default response")
@@ -334,20 +431,20 @@ CLIP Embedding: Generated ({deep_analysis.get('clip_embedding_dim', 0)} dimensio
                 if not answer.strip().endswith(".") and not answer.strip().endswith("!") and not answer.strip().endswith("?"):
                     answer += "."
                 answer = answer + " (Note: This response was generated without reference to your uploaded documents. Upload documents to get answers based on your content.)"
-                return answer, [], {}
+                return answer, [], {"confidence_score": 0.5}  # Lower confidence for general knowledge answers
             except asyncio.TimeoutError:
                 logger.error(f"LLM generation timed out for user {user.id}")
                 return (
                     "I'm sorry, but generating a response took too long. Please try rephrasing your question or check your API keys.",
                     [],
-                    {}
+                    {"confidence_score": 0.0}
                 )
             except Exception as e:
                 logger.error(f"Error generating LLM response without context: {e}", exc_info=True)
                 return (
                     "I couldn't find any relevant information in your documents to answer this question. Please upload some documents or try asking a general question.",
                     [],
-                    {}
+                    {"confidence_score": 0.0}
                 )
         
         # 3. Fetch chunks from DB
@@ -365,13 +462,43 @@ CLIP Embedding: Generated ({deep_analysis.get('clip_embedding_dim', 0)} dimensio
             return (
                 "I couldn't find any relevant information in your documents to answer this question.",
                 [],
-                {}
+                {"confidence_score": 0.0}
             )
+        
+        # 3b. Advanced RAG: Re-ranking (if enabled)
+        if settings.enable_reranking and len(chunks) > top_k:
+            try:
+                logger.debug(f"Re-ranking {len(hits)} results for user {user.id}")
+                hits = rerank_results(
+                    query=question,
+                    chunks=chunks,
+                    hits=hits,
+                    top_k=top_k
+                )
+                # Re-fetch chunks for top-k after re-ranking
+                chunk_ids = [h.chunk_id for h in hits]
+                chunks = [c for c in chunks if c.id in chunk_ids]
+                logger.info(f"Re-ranking completed: {len(chunks)} top results")
+            except Exception as e:
+                logger.warning(f"Re-ranking failed: {e}, using original results")
+                # Use top_k from original hits
+                hits = hits[:top_k]
+                chunk_ids = [h.chunk_id for h in hits]
+                chunks = [c for c in chunks if c.id in chunk_ids]
         
         # 4. Build context and check for images
         logger.debug(f"Building context from {len(chunks)} chunks for user {user.id}")
         context, citations = build_context(db=db, chunks=chunks, hits=hits)
         logger.debug(f"Built context ({len(context)} chars) with {len(citations)} citations")
+        
+        # 4b. Advanced RAG: Context compression (if enabled and context is long)
+        if settings.enable_context_compression and len(context) > 4000:
+            try:
+                original_length = len(context)
+                context = compress_context(context, max_chars=4000)
+                logger.info(f"Compressed context from {original_length} to {len(context)} chars")
+            except Exception as e:
+                logger.warning(f"Context compression failed: {e}, using original context")
         
         # Check if any chunks are from images - check both metadata and text content
         image_chunks = [
@@ -650,8 +777,147 @@ TAGS: {', '.join(tags) if tags else 'None'}"""
             if hasattr(self, '_enhanced_analyses'):
                 delattr(self, '_enhanced_analyses')
         
-        # 9. Return answer + citations + analysis_info
+        # 9. Calculate confidence score
+        confidence = calculate_confidence_score(hits, citations, answer, question)
+        
+        # 10. Fact-check answer (optional, can be expensive)
+        fact_check_result = None
+        if chunks and len(chunks) > 0:
+            try:
+                fact_check_result = fact_check_answer(answer, citations, chunks)
+            except Exception as e:
+                logger.warning(f"Fact-checking failed: {e}")
+        
+        # 11. Add metadata to analysis_info (ensure it exists)
+        if not analysis_info:
+            analysis_info = {}
+        analysis_info["confidence_score"] = confidence
+        analysis_info["fact_check"] = fact_check_result
+        
+        # 12. Return answer + citations + analysis_info (with confidence and fact-check)
         return answer, citations, analysis_info
+    
+    async def get_context_for_question(
+        self,
+        db: Session,
+        user: models.User,
+        session: models.ChatSession,
+        question: str,
+        top_k: int = 10,
+        exclude_message_id: int | None = None,
+    ) -> Tuple[str, List[Dict], Dict[str, Any]]:
+        """
+        Get context and citations for a question without calling LLM.
+        Useful for streaming where we want to stream the LLM response separately.
+        
+        Returns:
+            Tuple of (context_string, citations_list, analysis_info)
+        """
+        # Reuse the same logic from answer_question but stop before LLM call
+        # This is essentially the first part of answer_question
+        
+        # 1. Embed query (same as answer_question)
+        settings = get_settings()
+        
+        # Check cache for query embedding first
+        from app.utils.cache import get_cached_embedding, set_cached_embedding
+        cached_embedding = get_cached_embedding(question, user.id, ttl=86400)  # 24 hour TTL for embeddings
+        
+        if cached_embedding:
+            logger.debug(f"Using cached embedding for user {user.id} (streaming)")
+            query_vectors = [cached_embedding]
+        else:
+            query_vectors = [await self._embeddings.embed_query(question)]
+            # Cache the embedding
+            set_cached_embedding(question, user.id, query_vectors[0], ttl=86400)
+        
+        if settings.enable_multi_query:
+            try:
+                expanded_queries = expand_query(question)
+                if len(expanded_queries) > 1:
+                    for expanded_q in expanded_queries[1:3]:
+                        try:
+                            # Check cache for expanded query embedding
+                            cached_expanded = get_cached_embedding(expanded_q, user.id, ttl=86400)
+                            if cached_expanded:
+                                vec = cached_expanded
+                            else:
+                                vec = await self._embeddings.embed_query(expanded_q)
+                                set_cached_embedding(expanded_q, user.id, vec, ttl=86400)
+                            query_vectors.append(vec)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        
+        if len(query_vectors) > 1:
+            try:
+                query_vec = np.mean(query_vectors, axis=0).tolist()
+            except Exception:
+                query_vec = query_vectors[0]
+        else:
+            query_vec = query_vectors[0]
+        
+        # 2. Search vector store
+        search_k = top_k * 2 if settings.enable_reranking else top_k
+        hits = self._vector_store.search(
+            user_id=user.id,
+            query_vector=query_vec,
+            k=search_k
+        )
+        
+        if not hits:
+            return "", [], {}
+        
+        # 2b. Hybrid search
+        if settings.enable_hybrid_search and hits:
+            try:
+                hits = hybrid_search(
+                    db=db,
+                    user_id=user.id,
+                    query=question,
+                    vector_hits=hits,
+                    top_k=search_k,
+                    alpha=settings.hybrid_search_alpha
+                )
+            except Exception:
+                pass
+        
+        # 3. Fetch chunks
+        chunk_ids = [h.chunk_id for h in hits]
+        chunks: List[models.DocumentChunk] = (
+            db.query(models.DocumentChunk)
+            .filter(models.DocumentChunk.id.in_(chunk_ids))
+            .join(models.Document)
+            .filter(models.Document.user_id == user.id)
+            .all()
+        )
+        
+        if not chunks:
+            return "", [], {}
+        
+        # 3b. Re-ranking
+        if settings.enable_reranking and len(chunks) > top_k:
+            try:
+                hits = rerank_results(question, chunks, hits, top_k=top_k)
+                chunk_ids = [h.chunk_id for h in hits]
+                chunks = [c for c in chunks if c.id in chunk_ids]
+            except Exception:
+                hits = hits[:top_k]
+                chunk_ids = [h.chunk_id for h in hits]
+                chunks = [c for c in chunks if c.id in chunk_ids]
+        
+        # 4. Build context
+        context, citations = build_context(db=db, chunks=chunks, hits=hits)
+        
+        # 4b. Context compression
+        if settings.enable_context_compression and len(context) > 4000:
+            try:
+                context = compress_context(context, max_chars=4000)
+            except Exception:
+                pass
+        
+        return context, citations, {"confidence_score": 0.0}  # Placeholder, will be calculated during LLM call
 
 
 # DI helpers for FastAPI dependency injection

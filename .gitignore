@@ -48,6 +48,8 @@ data/
 # Database
 *.db
 *.sqlite
+*.db-shm
+*.db-wal
 
 # Docker
 .dockerignore
@@ -55,4 +57,12 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+
+# Test files
+test_all.py
+check_server.py
+
+# Frontend build
+frontend/dist/
+frontend/node_modules/
 

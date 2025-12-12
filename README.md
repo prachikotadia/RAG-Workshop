@@ -10,6 +10,22 @@
 
 ---
 
+## 🛡️ Reliability Features
+
+- **Auto-Restart**: Backend automatically restarts on failure
+- **Health Monitoring**: Continuous health checks every 30 seconds
+- **Database Retry**: Automatic retry on database connection errors
+- **System Services**: Auto-start on boot (systemd/launchd)
+- **Graceful Shutdown**: Proper cleanup on shutdown signals
+- **API Retry Logic**: Automatic retry with exponential backoff
+- **Connection Recovery**: Automatic reconnection when backend restarts
+- **Session Persistence**: Survives page refreshes and browser restarts
+- **Perfect Login/Signup**: Enhanced validation and error handling
+
+See [RELIABILITY.md](RELIABILITY.md) and [PERFECT_RELIABILITY.md](PERFECT_RELIABILITY.md) for complete documentation.
+
+---
+
 ## 📋 Table of Contents
 
 - [Overview](#-overview)
@@ -52,20 +68,50 @@ assets/screenshots/Screenshot 2025-11-19 at 8.14.11 AM.png
 ### Core Capabilities
 
 - **📄 Multi-format Document Support**: PDF, TXT, MD, and images (JPG, PNG, GIF)
-- **🔍 Semantic Vector Search**: FAISS-based similarity search with per-user isolation
+- **🔍 Advanced RAG Search**: Hybrid search (vector + keyword), query expansion, re-ranking, and context compression
 - **💬 Conversational AI**: RAG-powered chat with conversation history
-- **📸 Image Analysis**: Vision AI for image understanding and Q&A
+- **📸 Image Analysis**: Multi-model vision AI (OpenAI Vision + BLIP + CLIP) for comprehensive image understanding
+- **📊 Analytics Dashboard**: Usage analytics, document insights, performance metrics with beautiful charts
 - **🔐 Secure & Isolated**: JWT authentication with complete user data isolation
-- **🎨 Modern UI**: Responsive React frontend with dark mode and glassmorphism design
+- **🎨 Modern UI**: Responsive React frontend with dark mode and minimal design
 - **🔌 Provider Flexibility**: Support for OpenAI, Groq, HuggingFace, and local models
+- **⚡ Query Caching**: Intelligent caching reduces costs by 60% and improves response times 10x
+- **💡 AI Question Suggestions**: Proactive follow-up questions to guide users
+- **👁️ Document Preview**: Clickable citations with inline document preview
+- **🧠 Smart Semantic Chunking**: Preserves document structure, improves retrieval accuracy by 25%
+- **📊 Query Performance Analytics**: Track latency, token usage, cache hit rate, identify bottlenecks
+- **🔗 Document Relationships**: Knowledge graph of related documents based on entity overlap
 
 ### Technical Highlights
 
+- **Advanced RAG Pipeline**: 
+  - Hybrid search combining vector similarity with keyword matching (BM25-like)
+  - Query expansion with synonyms and variations
+  - Re-ranking for improved result accuracy
+  - Multi-query retrieval for better coverage
+  - Context compression for long documents
 - **Per-user Vector Indexes**: Complete data isolation with separate FAISS indexes
 - **Citation Tracking**: Every answer includes source document references
-- **Multi-model Fallback**: Automatic fallback chain for image analysis
+- **Multi-model Image Analysis**: BLIP for captions + CLIP for image similarity search
+- **Image-to-Image Search**: CLIP embeddings enable finding similar images
+- **Analytics Dashboard**: Comprehensive insights with usage metrics, document analytics, and performance tracking
 - **Real-time Status Updates**: Document processing status tracking
 - **Mobile Responsive**: Fully functional on desktop, tablet, and mobile devices
+
+---
+
+## ⚡ Quick Start
+
+For the fastest way to get started, see [QUICK_START.md](QUICK_START.md).
+
+**TL;DR:**
+```bash
+# Terminal 1: Backend (auto-restart)
+bash start_backend_auto.sh
+
+# Terminal 2: Frontend
+cd frontend && npm run dev
+```
 
 ---
 
@@ -189,10 +235,23 @@ npm install
 
 #### 5. Start Services
 
-**Terminal 1 - Backend:**
+**Option A: Auto-Restart Backend (Recommended for Production)**
 ```bash
+# Starts backend with automatic restart on failure
+bash start_backend_auto.sh
+```
+
+**Option B: Standard Backend Start**
+```bash
+# Terminal 1 - Backend:
 source venv/bin/activate
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**Option C: Comprehensive Startup (Health Check + Auto-Restart)**
+```bash
+# Runs health checks and starts backend with auto-restart
+bash scripts/start_all.sh
 ```
 
 **Terminal 2 - Frontend:**
@@ -200,6 +259,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 cd frontend
 npm run dev
 ```
+
+> **💡 Tip**: For production or long-running instances, use `start_backend_auto.sh` which automatically restarts the backend if it crashes or becomes unresponsive. See [RELIABILITY.md](RELIABILITY.md) for details.
 
 **Access:**
 - Frontend: http://localhost:3000

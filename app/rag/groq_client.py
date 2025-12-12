@@ -64,6 +64,41 @@ class GroqLlmClient(LlmClient):
         except Exception as e:
             logger.error(f"Error generating Groq LLM response: {e}", exc_info=True)
             raise
+    
+    async def stream(self, messages: List[Dict[str, str]]):
+        """Stream response tokens from Groq."""
+        client = self._get_client()
+        
+        async def _stream():
+            import asyncio
+            loop = asyncio.get_event_loop()
+            groq_messages = [
+                {"role": msg["role"], "content": msg["content"]}
+                for msg in messages
+            ]
+            
+            stream = await loop.run_in_executor(
+                None,
+                lambda: client.chat.completions.create(
+                    model=self.model,
+                    messages=groq_messages,
+                    temperature=0.8,
+                    top_p=0.9,
+                    stream=True
+                )
+            )
+            
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        
+        try:
+            import asyncio
+            async for chunk in _stream():
+                yield chunk
+        except Exception as e:
+            logger.error(f"Error streaming Groq LLM response: {e}", exc_info=True)
+            raise
 
 
 class LocalLlmClient(LlmClient):
@@ -128,5 +163,41 @@ class LocalLlmClient(LlmClient):
             raise TimeoutError("LLM generation timed out")
         except Exception as e:
             logger.error(f"Error generating Local LLM response: {e}", exc_info=True)
+            raise
+    
+    async def stream(self, messages: List[Dict[str, str]]):
+        """Stream response tokens from local LLM."""
+        client = self._get_client()
+        
+        async def _stream():
+            import asyncio
+            loop = asyncio.get_event_loop()
+            openai_messages = [
+                {"role": msg["role"], "content": msg["content"]}
+                for msg in messages
+            ]
+            
+            model_name = self.model or "local-model"
+            stream = await loop.run_in_executor(
+                None,
+                lambda: client.chat.completions.create(
+                    model=model_name,
+                    messages=openai_messages,
+                    temperature=0.8,
+                    top_p=0.9,
+                    stream=True
+                )
+            )
+            
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        
+        try:
+            import asyncio
+            async for chunk in _stream():
+                yield chunk
+        except Exception as e:
+            logger.error(f"Error streaming local LLM response: {e}", exc_info=True)
             raise
 

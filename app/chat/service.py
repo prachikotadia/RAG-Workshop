@@ -4,7 +4,7 @@ Chat service for managing chat sessions and messages.
 Phase 7 spec: Business logic for chat operations including RAG integration.
 """
 from datetime import datetime
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Any
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 import logging
@@ -261,7 +261,7 @@ async def handle_user_message(
     session_id: int,
     question: str,
     rag_chain: RagChain,
-) -> Tuple[models.ChatMessage, models.ChatMessage, List[Dict]]:
+) -> Tuple[models.ChatMessage, models.ChatMessage, List[Dict], Dict[str, Any]]:
     """
     Handle a user sending a new question to a chat session.
     
@@ -281,7 +281,7 @@ async def handle_user_message(
         rag_chain: RagChain instance for RAG processing
     
     Returns:
-        Tuple of (user_message, assistant_message, citations_list)
+        Tuple of (user_message, assistant_message, citations_list, analysis_info)
     
     Raises:
         HTTPException: 404 if session not found or not owned by user
@@ -325,31 +325,13 @@ async def handle_user_message(
             logger.error(f"RAG chain timed out for question: {question[:50]}...")
             answer_text = "I'm sorry, but processing your question took too long. Please try rephrasing it or asking a simpler question."
             citations = []
-            analysis_info = None
+            analysis_info = {"confidence_score": 0.0}
         except TimeoutError as te:
             # LLM generation timeout
             logger.error(f"LLM generation timed out: {te}")
             answer_text = "I'm sorry, but generating a response took too long. Please try rephrasing your question or check your API keys."
             citations = []
-            analysis_info = None
-            
-            # If image analysis was performed, include it in the response
-            if analysis_info and analysis_info.get("has_analysis") and analysis_info.get("image_analyses"):
-                logger.info(f"Including {len(analysis_info['image_analyses'])} image analyses in response")
-                is_comprehensive = analysis_info.get("is_comprehensive_scan", False)
-                
-                analysis_section = "\n\n" + "="*60 + "\n"
-                if is_comprehensive:
-                    analysis_section += "📸 COMPREHENSIVE IMAGE SCAN DETAILS\n"
-                    analysis_section += "(All details extracted from image during upload)\n"
-                else:
-                    analysis_section += "📸 IMAGE ANALYSIS (CLIP + BLIP-2)\n"
-                analysis_section += "="*60 + "\n\n"
-                for img_analysis in analysis_info["image_analyses"]:
-                    analysis_text = img_analysis.get("analysis_text", "")
-                    if analysis_text:
-                        analysis_section += analysis_text + "\n\n" + "-"*60 + "\n\n"
-                answer_text = answer_text + analysis_section
+            analysis_info = {"confidence_score": 0.0}
         except Exception as e:
             logger.error(f"Error in RAG chain: {e}", exc_info=True)
             error_msg = str(e)
@@ -359,6 +341,25 @@ async def handle_user_message(
             # Provide fallback answer with error details
             answer_text = f"I encountered an error while processing your question: {error_msg}. Please check the backend logs for more details or try again."
             citations = []
+            analysis_info = {"confidence_score": 0.0}
+        
+        # If image analysis was performed, include it in the response
+        if analysis_info and analysis_info.get("has_analysis") and analysis_info.get("image_analyses"):
+            logger.info(f"Including {len(analysis_info['image_analyses'])} image analyses in response")
+            is_comprehensive = analysis_info.get("is_comprehensive_scan", False)
+            
+            analysis_section = "\n\n" + "="*60 + "\n"
+            if is_comprehensive:
+                analysis_section += "📸 COMPREHENSIVE IMAGE SCAN DETAILS\n"
+                analysis_section += "(All details extracted from image during upload)\n"
+            else:
+                analysis_section += "📸 IMAGE ANALYSIS (CLIP + BLIP-2)\n"
+            analysis_section += "="*60 + "\n\n"
+            for img_analysis in analysis_info["image_analyses"]:
+                analysis_text = img_analysis.get("analysis_text", "")
+                if analysis_text:
+                    analysis_section += analysis_text + "\n\n" + "-"*60 + "\n\n"
+            answer_text = answer_text + analysis_section
         
         # Ensure answer is not empty
         if not answer_text or not answer_text.strip():
@@ -378,6 +379,25 @@ async def handle_user_message(
         db.refresh(assistant_msg)
         logger.info(f"Created assistant message {assistant_msg.id} for session {session_id}")
         
+        # Trigger webhook for chat message
+        try:
+            from app.admin.webhooks import trigger_webhook
+            await trigger_webhook(
+                db=db,
+                user_id=user.id,
+                event_type="chat.message",
+                payload={
+                    "session_id": session.id,
+                    "message_id": assistant_msg.id,
+                    "question": question,
+                    "answer_length": len(answer_text),
+                    "citations_count": len(citations),
+                    "confidence_score": analysis_info.get("confidence_score") if analysis_info and isinstance(analysis_info, dict) else None,
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to trigger webhook for chat message: {e}")
+        
         # 5. Auto-generate title if session doesn't have one yet (use first user message)
         if not session.title or session.title == "New chat":
             # Generate a short title from the first user message (max 50 chars)
@@ -388,8 +408,8 @@ async def handle_user_message(
             db.commit()
             logger.info(f"Auto-generated title for session {session_id}: {title}")
         
-        # 6. Return both messages and citations
-        return (user_msg, assistant_msg, citations)
+        # 6. Return both messages, citations, and analysis_info
+        return (user_msg, assistant_msg, citations, analysis_info)
         
     except HTTPException:
         # Re-raise HTTP exceptions (like 404 for session not found)

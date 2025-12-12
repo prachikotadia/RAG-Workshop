@@ -1,13 +1,9 @@
-"""
-Document service for managing documents.
-
-Orchestrates document ingestion pipeline (upload, parse, chunk, store, embed, index).
-"""
+# Document upload and processing service
 import uuid
 import asyncio
 from pathlib import Path
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from fastapi import UploadFile, HTTPException, status
 import logging
@@ -17,30 +13,18 @@ from app.db.models import DocumentStatus
 from app.config import get_settings
 from app.documents.parsers import extract_text_from_file
 from app.documents.chunking import chunk_text
+from app.documents.semantic_chunking import semantic_chunk_text
 from app.embeddings.provider import EmbeddingsProvider
 from app.embeddings.image_provider import CLIPImageEmbeddingsProvider
-from app.rag.image_analyzer import get_blip2_analyzer  # Returns SimpleImageAnalyzer (backward compatible)
+from app.rag.image_analyzer import get_blip2_analyzer
 from app.vectorstore.faiss_store import VectorStore
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
 def save_upload_to_disk(upload_file: UploadFile, user: models.User) -> Path:
-    """
-    Save the uploaded file under a per-user directory.
-    
-    Creates: storage/user_{user.id}/uploads/
-    Uses safe filename with timestamp/UUID prefix.
-    
-    Args:
-        upload_file: FastAPI UploadFile object
-        user: User model instance
-    
-    Returns:
-        Path to the saved file
-    """
+    # Save uploaded file to user's directory with a safe filename
     # Create per-user upload directory
     upload_dir = Path(settings.storage_base_dir) / f"user_{user.id}" / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -68,18 +52,7 @@ def create_document_record(
     upload_file: UploadFile,
     file_path: Path
 ) -> models.Document:
-    """
-    Create a Document row in the database.
-    
-    Args:
-        db: Database session
-        user: User model instance
-        upload_file: Uploaded file object
-        file_path: Path to saved file (with safe filename)
-    
-    Returns:
-        Created Document model instance
-    """
+    # Create database record for the uploaded document
     # Use original filename without extension as title
     title = Path(upload_file.filename or "Untitled").stem
     
@@ -105,65 +78,32 @@ async def process_and_index_document(
     embeddings_provider: EmbeddingsProvider,
     vector_store: VectorStore,
 ) -> models.Document:
-    """
-    End-to-end pipeline for a single uploaded document.
-    
-    CRITICAL: This function GUARANTEES that the document status will be either READY or FAILED.
-    It is FORBIDDEN for this function to exit with status UPLOADING or INDEXING.
-    
-    Flow:
-    1. Save file to disk
-    2. Create Document row with status=UPLOADING
-    3. Set status=INDEXING, commit
-    4. Extract text and metadata from file
-    5. Chunk the text
-    6. Create DocumentChunk rows for each chunk
-    7. Compute embeddings for each chunk's text
-    8. Add chunk embeddings to the user's FAISS index
-    9. Update document.num_chunks and status=READY, commit
-    
-    Args:
-        db: Database session
-        user: User model instance
-        upload_file: FastAPI UploadFile object
-        embeddings_provider: Embeddings provider instance
-        vector_store: Vector store instance for the user
-    
-    Returns:
-        Document model instance with status=READY
-    
-    Raises:
-        HTTPException: On failure, document is marked as FAILED
-    """
+    # Process uploaded document: save, extract text, chunk, embed, and index
+    # Always ends with status READY or FAILED
     document = None
     file_path = None
     
     try:
-        # Step 1: Save file to disk
         try:
             file_path = save_upload_to_disk(upload_file, user)
         except Exception as e:
-            logger.error(f"Failed to save file to disk: {e}", exc_info=True)
+            logger.error(f"Failed to save file: {e}", exc_info=True)
             raise ValueError(f"Failed to save uploaded file: {str(e)}")
         
-        # Step 2: Create Document record with status=UPLOADING
         try:
             document = create_document_record(db, user, upload_file, file_path)
-            logger.info(f"Created document record {document.id} with status UPLOADING")
+            logger.info(f"Created document {document.id}")
         except Exception as e:
             logger.error(f"Failed to create document record: {e}", exc_info=True)
             raise ValueError(f"Failed to create document record: {str(e)}")
         
-        # Step 3: Update status to INDEXING and commit immediately
         try:
             document.status = DocumentStatus.INDEXING
             db.commit()
             db.refresh(document)
-            logger.info(f"📄 [INDEXING] Document {document.id} ('{document.title}') - Status changed to INDEXING")
-            logger.info(f"📄 [INDEXING] Document {document.id} - Starting indexing process...")
+            logger.info(f"Document {document.id} - Starting indexing")
         except Exception as e:
             logger.error(f"Failed to set status to INDEXING: {e}", exc_info=True)
-            # Try to set FAILED as fallback
             try:
                 document.status = DocumentStatus.FAILED
                 db.commit()
@@ -171,27 +111,26 @@ async def process_and_index_document(
                 db.rollback()
             raise ValueError(f"Failed to update document status: {str(e)}")
         
-        # Extract text and metadata
         try:
-            logger.info(f"📄 [INDEXING] Document {document.id} - Step 1/5: Extracting text and metadata...")
             text, file_metadata = extract_text_from_file(file_path)
             if not text or not text.strip():
                 logger.error(f"Extracted text is empty for document {document.id}")
                 raise ValueError("Extracted text is empty or invalid")
-            logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Extracted {len(text)} characters from file")
+            logger.info(f"Document {document.id} - Extracted {len(text)} characters")
+            
+            if file_path.exists():
+                document.file_size = file_path.stat().st_size
+            document.file_type = file_metadata.get("mime_type") or file_metadata.get("file_type") or upload_file.content_type
+            db.commit()
         except Exception as e:
-            logger.error(f"Failed to extract text from file for document {document.id}: {e}", exc_info=True)
+            logger.error(f"Failed to extract text: {e}", exc_info=True)
             raise ValueError(f"Failed to parse file: {str(e)}")
         
-        # Check if this is an image file
         is_image = file_metadata.get("file_type") == "image"
         
-        # Process image or text
         if is_image:
-            logger.info(f"📄 [INDEXING] Document {document.id} - Step 2/5: Analyzing image file...")
-            logger.info(f"📄 [INDEXING] Document {document.id} - Image path: {file_path}")
+            logger.info(f"Document {document.id} - Processing image")
             
-            import asyncio
             try:
                 async def process_image_with_timeout():
                     caption_generated = False
@@ -201,22 +140,20 @@ async def process_and_index_document(
                         # Use the new comprehensive scan function (more stable and faster)
                         from app.rag.image_analyzer import scan_image_comprehensively
                         
-                        logger.info(f"📄 [INDEXING] Document {document.id} - Attempting image analysis (OpenAI → Local → Metadata)...")
+                        logger.info(f"Document {document.id} - Analyzing image")
                         try:
-                            # Use comprehensive scan with fast timeout
-                            # Prioritize speed - fail fast to metadata
                             scan_result = await asyncio.wait_for(
                                 scan_image_comprehensively(file_path),
-                                timeout=8.0  # Reduced to 8s - fail fast
+                                timeout=35.0
                             )
-                            logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Image analysis completed")
+                            logger.info(f"Document {document.id} - Image analysis completed")
                             
                             # Extract information from scan result
                             scan_text = scan_result.get('scan_text', '')
                             caption = scan_result.get('caption', '')
                             description = scan_result.get('description', '')
                             
-                            # Build processed text from scan
+                            # Build processed text from scan (includes both BLIP and CLIP info)
                             processed_text = f"""Image: {document.title}
 
 {scan_text}
@@ -229,14 +166,25 @@ async def process_and_index_document(
                             file_metadata['detailed_description'] = description
                             file_metadata['analysis_source'] = scan_result.get('analysis_source', 'Unknown')
                             
+                            # Store CLIP embedding in metadata for image similarity search
+                            # CLIP embeddings (512 dim) are stored separately from text embeddings (1536/384 dim)
+                            # to enable image-to-image similarity search using CLIP
+                            clip_embedding = scan_result.get('clip_embedding')
+                            if clip_embedding:
+                                file_metadata['clip_embedding'] = clip_embedding
+                                file_metadata['clip_embedding_dim'] = scan_result.get('clip_embedding_dim', 0)
+                                logger.info(f"Document {document.id} - Stored CLIP embedding")
+                            else:
+                                logger.info(f"Document {document.id} - CLIP embedding not available")
+                            
                             caption_generated = True
                             analysis_source = scan_result.get('analysis_source', 'Unknown')
-                            logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Image analysis completed using: {analysis_source}")
+                            logger.info(f"Document {document.id} - Image analysis done: {analysis_source}")
                         
                         except asyncio.TimeoutError:
-                            logger.warning(f"📄 [INDEXING] Document {document.id} - ⚠ Image analysis timed out, falling back to metadata")
+                            logger.warning(f"Document {document.id} - Image analysis timed out")
                         except Exception as e:
-                            logger.warning(f"📄 [INDEXING] Document {document.id} - ⚠ Image analysis failed: {e}, falling back to metadata", exc_info=True)
+                            logger.warning(f"Document {document.id} - Image analysis failed: {e}", exc_info=True)
                     except Exception as e:
                         logger.warning(f"[IMAGE] Image scanner initialization failed for document {document.id}: {e}, using basic metadata", exc_info=True)
                     
@@ -248,16 +196,16 @@ async def process_and_index_document(
                     logger.info(f"[IMAGE] Image processing completed for document {document.id}, text length: {len(processed_text)}")
                     return processed_text
                 
-                # Execute with fast timeout - prioritize speed
-                # If analysis takes too long, use metadata fallback immediately
-                timeout = 10.0  # Reduced to 10s - fail fast to metadata
+                # Execute with reasonable timeout - allow OpenAI Vision to complete
+                # If analysis takes too long, use metadata fallback
+                timeout = 35.0  # 35s for image analysis (matches scan_image_comprehensively timeout)
                 
-                logger.info(f"📄 [INDEXING] Document {document.id} - Starting image processing with {timeout}s timeout...")
+                logger.info(f"Document {document.id} - Processing image")
                 text = await asyncio.wait_for(process_image_with_timeout(), timeout=timeout)
-                logger.info(f"[IMAGE] Image processing completed successfully for document {document.id}, text length: {len(text)}")
+                logger.info(f"Document {document.id} - Image processing done, {len(text)} chars")
                 
             except asyncio.TimeoutError as timeout_err:
-                logger.warning(f"📄 [INDEXING] Document {document.id} - ⚠ Image processing timed out, using metadata")
+                logger.warning(f"Document {document.id} - Image processing timed out")
                 # Use basic metadata if everything times out - don't fail, just use metadata
                 if not text or not text.strip():
                     text = f"Image: {document.title}\n\nMetadata: {file_metadata}"
@@ -280,36 +228,50 @@ async def process_and_index_document(
             # Chunk the image description
             # If comprehensive scan is present, keep it as ONE chunk to preserve all scan data
             try:
-                logger.info(f"📄 [INDEXING] Document {document.id} - Step 3/5: Chunking text ({len(text)} chars)...")
+                logger.info(f"Document {document.id} - Chunking text ({len(text)} chars)")
                 if "COMPREHENSIVE IMAGE SCAN" in text:
-                    # For comprehensive scans, keep as single chunk to preserve all sections together
                     chunks_info = [{
                         "chunk_index": 0,
                         "text": text,
                         "token_count": len(text.split())
                     }]
-                    logger.info(f"📄 [INDEXING] Document {document.id} - Using single chunk for comprehensive scan")
+                    logger.info(f"Document {document.id} - Using single chunk for scan")
                 else:
-                    # For regular image analysis, use chunking
-                    chunks_info = chunk_text(text, max_words=500, overlap_words=0)
+                    if getattr(settings, 'enable_semantic_chunking', True):
+                        chunks_info = semantic_chunk_text(
+                            text,
+                            max_chunk_size=500,
+                            min_chunk_size=50,
+                            overlap_size=0,
+                            preserve_structure=True
+                        )
+                    else:
+                        chunks_info = chunk_text(text, max_words=500, overlap_words=0)
                 
                 if not chunks_info or len(chunks_info) == 0:
                     logger.error(f"No chunks generated for document {document.id}")
                     raise ValueError("No chunks generated from image text")
-                logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Created {len(chunks_info)} chunk(s)")
+                logger.info(f"Document {document.id} - Created {len(chunks_info)} chunks")
             except Exception as e:
-                logger.error(f"Failed to chunk image text for document {document.id}: {e}", exc_info=True)
+                logger.error(f"Failed to chunk image text: {e}", exc_info=True)
                 raise ValueError(f"Failed to chunk image text: {str(e)}")
         else:
-            # For text documents: normal processing
             if not text or not text.strip():
                 raise ValueError("Extracted text is empty")
             
-            # Step 3: Chunk the text
-            logger.info(f"📄 [INDEXING] Document {document.id} - Step 3/5: Chunking text ({len(text)} chars)...")
             try:
-                chunks_info = chunk_text(text, max_words=200, overlap_words=50)
-                logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Created {len(chunks_info)} chunk(s)")
+                if getattr(settings, 'enable_semantic_chunking', True):
+                    chunks_info = semantic_chunk_text(
+                        text,
+                        max_chunk_size=200,
+                        min_chunk_size=50,
+                        overlap_size=50,
+                        preserve_structure=True
+                    )
+                    logger.info(f"Document {document.id} - Created {len(chunks_info)} semantic chunks")
+                else:
+                    chunks_info = chunk_text(text, max_words=200, overlap_words=50)
+                    logger.info(f"Document {document.id} - Created {len(chunks_info)} chunks")
             except Exception as e:
                 logger.error(f"Failed to chunk text: {e}", exc_info=True)
                 raise ValueError(f"Failed to chunk document text: {str(e)}")
@@ -318,8 +280,7 @@ async def process_and_index_document(
             logger.error(f"No chunks generated for document {document.id}")
             raise ValueError("No chunks generated from text")
         
-        # Create DocumentChunk rows
-        logger.info(f"📄 [INDEXING] Document {document.id} - Step 4/5: Saving chunks to database...")
+        logger.info(f"Document {document.id} - Saving chunks to database")
         chunk_objects = []
         try:
             for chunk_data in chunks_info:
@@ -340,60 +301,47 @@ async def process_and_index_document(
                 chunk_objects.append(chunk)
             
             db.commit()
-            logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Saved {len(chunk_objects)} chunk(s) to database")
+            logger.info(f"Document {document.id} - Saved {len(chunk_objects)} chunks")
         except Exception as e:
-            logger.error(f"Failed to create document chunks for document {document.id}: {e}", exc_info=True)
+            logger.error(f"Failed to create chunks: {e}", exc_info=True)
             db.rollback()
             raise ValueError(f"Failed to create document chunks: {str(e)}")
         
-        # Compute embeddings
-        logger.info(f"📄 [INDEXING] Document {document.id} - Step 5/5: Generating embeddings for {len(chunk_objects)} chunk(s)...")
         embeddings = None
         try:
             if is_image:
-                # For images: Use text embeddings to ensure dimension compatibility with existing FAISS index
-                # CLIP embeddings have different dimensions (512) than text embeddings (1536/384),
-                # which causes FAISS dimension mismatch errors when mixing them in the same index.
-                # We use the image description text to generate embeddings that match the text embedding dimension.
-                import asyncio
-                
-                # Always use text embeddings for images to avoid dimension mismatches
-                # The image description text (from metadata analysis) will be embedded using the same
-                # provider as text documents, ensuring consistent dimensions.
                 chunk_texts = [chunk.text for chunk in chunk_objects]
                 try:
-                    logger.info(f"📄 [INDEXING] Document {document.id} - Generating text embeddings for {len(chunk_texts)} image description chunk(s)...")
+                    logger.info(f"Document {document.id} - Generating embeddings for {len(chunk_texts)} chunks")
                     embeddings = await asyncio.wait_for(
                         embeddings_provider.embed_documents(chunk_texts),
-                        timeout=15.0  # Reduced from 30s to 15s for faster processing
+                        timeout=15.0
                     )
                     if embeddings and len(embeddings) > 0:
-                        emb_dim = len(embeddings[0]) if embeddings else 0
-                        logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Generated {len(embeddings)} embedding(s) (dimension: {emb_dim})")
+                        logger.info(f"Document {document.id} - Generated {len(embeddings)} embeddings")
                     else:
                         logger.error(f"No embeddings generated for document {document.id}")
                         raise ValueError("No embeddings generated")
                 except asyncio.TimeoutError:
-                    logger.error(f"📄 [INDEXING] Document {document.id} - ✗ Embedding generation timed out after 15 seconds")
+                    logger.error(f"Document {document.id} - Embedding generation timed out")
                     raise ValueError("Embedding generation timed out")
                 except Exception as e:
-                    logger.error(f"📄 [INDEXING] Document {document.id} - ✗ Embedding generation failed: {e}", exc_info=True)
+                    logger.error(f"Document {document.id} - Embedding generation failed: {e}", exc_info=True)
                     raise ValueError(f"Failed to generate embeddings: {str(e)}")
             else:
-                # For text: Use text embeddings
                 chunk_texts = [chunk.text for chunk in chunk_objects]
-                logger.info(f"📄 [INDEXING] Document {document.id} - Generating embeddings for {len(chunk_texts)} text chunk(s)...")
+                logger.info(f"Document {document.id} - Generating embeddings for {len(chunk_texts)} chunks")
                 try:
                     embeddings = await asyncio.wait_for(
                         embeddings_provider.embed_documents(chunk_texts),
-                        timeout=30.0  # 30 seconds timeout for text embeddings
+                        timeout=30.0
                     )
-                    logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Generated {len(embeddings)} embedding(s)")
+                    logger.info(f"Document {document.id} - Generated {len(embeddings)} embeddings")
                 except asyncio.TimeoutError:
-                    logger.error(f"📄 [INDEXING] Document {document.id} - ✗ Embedding generation timed out after 30 seconds")
+                    logger.error(f"Document {document.id} - Embedding generation timed out")
                     raise ValueError("Embedding generation timed out")
                 except Exception as e:
-                    logger.error(f"📄 [INDEXING] Document {document.id} - ✗ Embedding generation failed: {e}", exc_info=True)
+                    logger.error(f"Document {document.id} - Embedding generation failed: {e}", exc_info=True)
                     raise ValueError(f"Failed to generate embeddings: {str(e)}")
             
             if not embeddings or len(embeddings) == 0:
@@ -406,8 +354,6 @@ async def process_and_index_document(
             logger.error(f"Failed to generate embeddings for document {document.id}: {e}", exc_info=True)
             raise ValueError(f"Failed to generate embeddings: {str(e)}")
         
-        # Add to vector store
-        logger.info(f"📄 [INDEXING] Document {document.id} - Adding {len(chunk_objects)} chunk(s) to vector store...")
         try:
             chunk_ids = [chunk.id for chunk in chunk_objects]
             vector_store.add_document_chunks(
@@ -416,7 +362,7 @@ async def process_and_index_document(
                 embeddings=embeddings,
                 chunk_ids=chunk_ids
             )
-            logger.info(f"📄 [INDEXING] Document {document.id} - ✓ Added {len(chunk_ids)} chunk(s) to vector store")
+            logger.info(f"Document {document.id} - Added {len(chunk_ids)} chunks to vector store")
         except Exception as e:
             logger.error(f"Failed to add chunks to vector store for document {document.id}: {e}", exc_info=True)
             raise ValueError(f"Failed to index document in vector store: {str(e)}")
@@ -427,17 +373,17 @@ async def process_and_index_document(
             document.status = DocumentStatus.READY
             db.commit()
             db.refresh(document)
-            logger.info(f"✅ [INDEXING] Document {document.id} ('{document.title}') - Status changed to READY")
-            logger.info(f"✅ [INDEXING] Document {document.id} - Indexing completed successfully! ({len(chunks_info)} chunk(s))")
+            logger.info(f"Document {document.id} - Status changed to READY")
+            logger.info(f"Document {document.id} - Indexing completed ({len(chunks_info)} chunks)")
         except Exception as e:
-            logger.error(f"CRITICAL: Failed to update document {document.id} status to READY: {e}", exc_info=True)
+            logger.error(f"Failed to update document {document.id} status to READY: {e}", exc_info=True)
             # This is critical - try to set FAILED as fallback
             try:
                 document.status = DocumentStatus.FAILED
                 db.commit()
                 logger.info(f"Document {document.id} marked as FAILED after READY update failure")
             except Exception as commit_error:
-                logger.critical(f"CRITICAL: Could not mark document {document.id} as FAILED after READY update failure: {commit_error}", exc_info=True)
+                logger.error(f"Could not mark document {document.id} as FAILED: {commit_error}", exc_info=True)
                 db.rollback()
                 # Try one more time
                 try:
@@ -446,13 +392,30 @@ async def process_and_index_document(
                     db.commit()
                     logger.info(f"Document {document.id} marked as FAILED on retry")
                 except Exception as final_error:
-                    logger.critical(f"CRITICAL: Final attempt to mark document {document.id} as FAILED also failed: {final_error}", exc_info=True)
+                    logger.error(f"Final attempt to mark document {document.id} as FAILED failed: {final_error}", exc_info=True)
             raise ValueError(f"Failed to update document status: {str(e)}")
         
-        # Final verification: document status MUST be READY at this point
         if document.status != DocumentStatus.READY:
-            logger.critical(f"CRITICAL: Document {document.id} status is {document.status} instead of READY after processing!")
+            logger.error(f"Document {document.id} status is {document.status} instead of READY")
             raise ValueError(f"Document status is {document.status} instead of READY")
+        
+        # Trigger webhook for document upload (after successful processing)
+        try:
+            from app.admin.webhooks import trigger_webhook
+            await trigger_webhook(
+                db=db,
+                user_id=user.id,
+                event_type="document.uploaded",
+                payload={
+                    "document_id": document.id,
+                    "title": document.title,
+                    "filename": document.original_filename,
+                    "status": document.status.value if document.status else None,
+                    "num_chunks": document.num_chunks,
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to trigger webhook for document upload: {e}")
         
         return document
         
@@ -476,9 +439,15 @@ async def process_and_index_document(
                 except Exception as final_error:
                     logger.critical(f"CRITICAL: Could not mark document {document.id} as FAILED: {final_error}", exc_info=True)
         
+        error_msg = str(e)
+        logger.error(f"ValueError in process_and_index_document: {error_msg}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to process document: {str(e)}"
+            detail={
+                "error": "document_processing_failed",
+                "message": f"Failed to process document: {error_msg}",
+                "document_id": document.id if document else None
+            }
         )
         
     except Exception as e:
@@ -503,29 +472,105 @@ async def process_and_index_document(
                 except Exception as final_error:
                     logger.critical(f"CRITICAL: Could not mark document {document.id} as FAILED: {final_error}", exc_info=True)
         
+        error_msg = str(e)
+        logger.error(f"Unexpected error in process_and_index_document: {error_msg}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to process document: {str(e)}"
+            detail={
+                "error": "document_processing_error",
+                "message": f"Failed to process document: {error_msg}",
+                "document_id": document.id if document else None
+            }
         )
 
 
-def list_user_documents(db: Session, user: models.User) -> List[models.Document]:
+def list_user_documents(
+    db: Session,
+    user: models.User,
+    tag_ids: Optional[List[int]] = None,
+    category_id: Optional[int] = None,
+    file_type: Optional[str] = None,
+    min_size: Optional[int] = None,
+    max_size: Optional[int] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+) -> List[models.Document]:
     """
-    Return all documents belonging to the user.
+    Return all documents belonging to the user with optional filters.
     
     Args:
         db: Database session
         user: User model instance
+        tag_ids: Optional list of tag IDs to filter by
+        category_id: Optional category ID to filter by
+        file_type: Optional file type filter (MIME type or extension)
+        min_size: Optional minimum file size in bytes
+        max_size: Optional maximum file size in bytes
+        date_from: Optional start date filter
+        date_to: Optional end date filter
     
     Returns:
         List of Document model instances
     """
-    return (
-        db.query(models.Document)
-        .filter(models.Document.user_id == user.id)
-        .order_by(models.Document.created_at.desc())
-        .all()
-    )
+    from sqlalchemy.orm import joinedload
+    
+    # Simple query - new columns are commented out in model
+    query = db.query(models.Document).filter(models.Document.user_id == user.id)
+    
+    # Filter by tags (if tables exist)
+    if tag_ids:
+        try:
+            from app.db.tag_models import Tag, document_tags
+            query = query.join(document_tags).join(Tag).filter(Tag.id.in_(tag_ids))
+        except (ImportError, Exception):
+            # Tags tables might not exist yet, skip filter
+            pass
+    
+    # Filter by category (if column exists)
+    if category_id:
+        try:
+            query = query.filter(models.Document.category_id == category_id)
+        except Exception:
+            # Column might not exist yet, skip filter
+            pass
+    
+    # Filter by file type (if column exists)
+    if file_type:
+        try:
+            query = query.filter(models.Document.file_type.ilike(f'%{file_type}%'))
+        except Exception:
+            # Column might not exist yet, skip filter
+            pass
+    
+    # Filter by file size (if column exists)
+    if min_size is not None:
+        try:
+            query = query.filter(models.Document.file_size >= min_size)
+        except Exception:
+            # Column might not exist yet, skip filter
+            pass
+    if max_size is not None:
+        try:
+            query = query.filter(models.Document.file_size <= max_size)
+        except Exception:
+            # Column might not exist yet, skip filter
+            pass
+    
+    # Filter by date range
+    if date_from:
+        query = query.filter(models.Document.created_at >= date_from)
+    if date_to:
+        query = query.filter(models.Document.created_at <= date_to)
+    
+    # Eagerly load tags to avoid N+1 queries (if tags relationship exists)
+    try:
+        if hasattr(models.Document, 'tags'):
+            query = query.options(joinedload(models.Document.tags))
+    except Exception:
+        # Tags relationship might not exist yet, continue without eager loading
+        pass
+    
+    return query.order_by(models.Document.created_at.desc()).all()
 
 
 def get_user_document(
@@ -559,7 +604,10 @@ def get_user_document(
     if not document:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found"
+            detail={
+                "error": "document_not_found",
+                "message": "Document not found or you don't have permission to access it"
+            }
         )
     
     return document
@@ -614,3 +662,52 @@ def delete_user_document(
     db.commit()
     
     logger.info(f"Deleted document {document_id} for user {user.id}")
+
+
+def cleanup_stuck_documents(
+    db: Session,
+    user: Optional[models.User] = None,
+    max_age_minutes: int = 5
+) -> int:
+    # Find and fix documents stuck in INDEXING status
+    # Documents stuck for more than max_age_minutes are marked as FAILED
+    from datetime import datetime, timedelta, timezone
+    
+    cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+    
+    query = db.query(models.Document).filter(
+        models.Document.status == DocumentStatus.INDEXING,
+        models.Document.created_at < cutoff_time
+    )
+    
+    if user:
+        query = query.filter(models.Document.user_id == user.id)
+    
+    stuck_docs = query.all()
+    fixed_count = 0
+    
+    for doc in stuck_docs:
+        try:
+            from datetime import datetime, timezone
+            age_minutes = (datetime.now(timezone.utc) - doc.created_at.replace(tzinfo=timezone.utc)).total_seconds() / 60
+            logger.warning(f"Found stuck document {doc.id} (created {doc.created_at}, status: {doc.status}, age: {age_minutes:.1f} min)")
+            doc.status = DocumentStatus.FAILED
+            db.commit()
+            fixed_count += 1
+            logger.info(f"Marked stuck document {doc.id} as FAILED")
+        except Exception as e:
+            logger.error(f"Failed to fix stuck document {doc.id}: {e}", exc_info=True)
+            db.rollback()
+            try:
+                db.refresh(doc)
+                doc.status = DocumentStatus.FAILED
+                db.commit()
+                fixed_count += 1
+                logger.info(f"Marked stuck document {doc.id} as FAILED on retry")
+            except Exception as retry_error:
+                logger.error(f"Failed to fix stuck document {doc.id} on retry: {retry_error}", exc_info=True)
+    
+    if fixed_count > 0:
+        logger.info(f"Cleaned up {fixed_count} stuck document(s)")
+    
+    return fixed_count

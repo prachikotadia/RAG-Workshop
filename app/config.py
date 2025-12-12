@@ -54,12 +54,21 @@ class Settings(BaseSettings):
     chroma_persist_directory: str = "data/chroma"
     cors_origins: str = "*"
     max_file_size_mb: int = 50
-    allowed_file_extensions: str = ".pdf,.txt,.md,.markdown,.jpg,.jpeg,.png,.gif,.webp,.bmp,.heic,.heif,.tiff,.tif,.svg,.ico"
+    allowed_file_extensions: str = ".pdf,.txt,.md,.markdown,.jpg,.jpeg,.png,.gif,.webp,.bmp,.heic,.heif,.tiff,.tif,.svg,.ico,.json,.csv,.docx,.pptx"
     # Image analysis
     # NOTE: BLIP captioning model can hang on CPU. Set to True only if you have OPENAI_API_KEY or are willing to risk hangs.
     # For best results, use OPENAI_API_KEY with OpenAI Vision API instead.
     enable_caption_model: bool = False  # Default: false - BLIP hangs on CPU. Set to true only if you have OPENAI_API_KEY or accept risk of hangs
     local_caption_model_name: str = "Salesforce/blip-image-captioning-base"  # HuggingFace model for local captioning
+    
+    # Advanced RAG features
+    enable_hybrid_search: bool = True  # Combine vector + keyword search
+    enable_query_expansion: bool = True  # Expand queries with synonyms
+    enable_reranking: bool = True  # Re-rank results for better accuracy
+    enable_multi_query: bool = True  # Generate multiple query variations
+    enable_context_compression: bool = True  # Compress long contexts
+    hybrid_search_alpha: float = 0.7  # Weight for vector search (0.7 = 70% vector, 30% keyword)
+    enable_semantic_chunking: bool = True  # Use semantic chunking instead of fixed-size
     
     class Config:
         """Pydantic v1-style Config (Phase 2 spec)."""

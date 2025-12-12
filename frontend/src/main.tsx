@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
 import { router } from './router';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import './styles/globals.css';
 
 // Clear any old service workers and caches on app load
@@ -24,9 +25,11 @@ if ('caches' in window) {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ThemeProvider>
-      <RouterProvider router={router} />
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <RouterProvider router={router} />
+      </ThemeProvider>
+    </ErrorBoundary>
   </React.StrictMode>
 );
 

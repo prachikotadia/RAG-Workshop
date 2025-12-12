@@ -72,11 +72,57 @@ class DocumentResponse(DocumentBase):
     user_id: int
     status: DocumentStatus
     num_chunks: int
+    # New optional fields - will be available after migration
+    # category_id: Optional[int] = None
+    # file_size: Optional[int] = None
+    # file_type: Optional[str] = None
+    tags: List[Dict[str, Any]] = []  # List of tag objects
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True  # Pydantic v2
+    
+    @classmethod
+    def model_validate(cls, obj):
+        """Custom model_validate to include tags."""
+        if hasattr(obj, '__dict__'):
+            # SQLAlchemy model
+            # New fields are commented out until migration
+            category_id = None  # getattr(obj, 'category_id', None)
+            file_size = None  # getattr(obj, 'file_size', None)
+            file_type = None  # getattr(obj, 'file_type', None)
+            
+            # Safely get tags (relationship might not work if table doesn't exist)
+            tags = []
+            if hasattr(obj, 'tags'):
+                try:
+                    tag_list = obj.tags.all() if hasattr(obj.tags, 'all') else obj.tags
+                    tags = [
+                        {"id": tag.id, "name": tag.name, "color": tag.color}
+                        for tag in tag_list
+                    ]
+                except Exception:
+                    # Tags table might not exist yet
+                    tags = []
+            
+            data = {
+                "id": obj.id,
+                "user_id": obj.user_id,
+                "title": obj.title,
+                "original_filename": obj.original_filename,
+                "status": obj.status,
+                "num_chunks": obj.num_chunks,
+                "category_id": category_id,
+                "file_size": file_size,
+                "file_type": file_type,
+                "created_at": obj.created_at,
+                "updated_at": obj.updated_at,
+                "tags": tags,
+            }
+            return cls(**data)
+        else:
+            return super().model_validate(obj)
 
 
 # Alias for Phase 2 spec compatibility
@@ -151,9 +197,29 @@ class ChatMessageResponse(ChatMessageBase):
     role: ChatRole
     retrieved_chunks: List[Dict[str, Any]]
     created_at: datetime
+    confidence_score: Optional[float] = None  # Confidence score if available
 
     class Config:
         from_attributes = True  # Pydantic v2
+    
+    @classmethod
+    def model_validate(cls, obj):
+        """Custom model_validate to extract confidence from metadata if stored."""
+        if hasattr(obj, '__dict__'):
+            # SQLAlchemy model - check if confidence is in retrieved_chunks metadata
+            data = {
+                "id": obj.id,
+                "session_id": obj.session_id,
+                "role": obj.role,
+                "content": obj.content,
+                "retrieved_chunks": obj.retrieved_chunks or [],
+                "created_at": obj.created_at,
+                "confidence_score": None,  # Will be extracted from metadata if available
+            }
+            # Try to extract confidence from message metadata (if stored in future)
+            return cls(**data)
+        else:
+            return super().model_validate(obj)
 
 
 # Alias for Phase 2 spec compatibility

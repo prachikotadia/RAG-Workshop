@@ -74,11 +74,11 @@ export function SidebarChatHistory({
         cancelText="Cancel"
         variant="danger"
       />
-    <div className="h-full flex flex-col glass dark:glass-dark backdrop-blur-md bg-white/95 dark:bg-gray-800/95 border-r border-gray-200/50 dark:border-gray-700/50">
-      <div className="p-4 md:p-5 border-b border-gray-200/50 dark:border-gray-700/50">
+    <div className="h-full flex flex-col glass-strong dark:glass-strong backdrop-blur-xl bg-white/95 dark:bg-gray-800/95 border-r border-gray-200/60 dark:border-gray-700/60">
+      <div className="p-4 md:p-5 border-b border-gray-200/60 dark:border-gray-700/60">
         <button
           onClick={onCreateNew}
-          className="w-full px-4 py-3 md:px-5 md:py-3.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 dark:from-blue-500 dark:to-purple-500 dark:hover:from-blue-600 dark:hover:to-purple-600 text-white font-semibold rounded-xl transition-all duration-300 flex items-center justify-center space-x-2 text-sm md:text-base shadow-lg hover:shadow-xl hover-lift hover-glow transform hover:scale-[1.02] active:scale-[0.98]"
+          className="w-full px-4 py-3 bg-blue-500 hover:bg-blue-600 dark:bg-blue-400 dark:hover:bg-blue-500 text-white font-semibold rounded-xl transition-all duration-200 flex items-center justify-center space-x-2 text-sm md:text-base shadow-soft hover:shadow-medium hover-lift"
         >
           <svg className="w-4 h-4 md:w-5 md:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
@@ -95,32 +95,44 @@ export function SidebarChatHistory({
       <div className="flex-1 overflow-y-auto">
         {loading && sessions.length === 0 ? (
           <div className="flex justify-center items-center py-8">
+            <div className="glass dark:glass-dark px-6 py-4 rounded-2xl shadow-soft">
             <LoadingSpinner />
+            </div>
           </div>
         ) : sessions.length === 0 ? (
-          <div className="p-4 text-center text-gray-500 dark:text-gray-400 text-sm">
+          <div className="p-6 text-center">
+            <div className="glass-strong dark:glass-strong backdrop-blur-sm rounded-2xl p-6">
+              <p className="text-gray-600 dark:text-gray-400 text-sm font-semibold">
             No chat sessions yet. Create one to get started!
+              </p>
+            </div>
           </div>
         ) : (
-          <div className="p-2 space-y-1">
-            {sessions.map((session) => (
+          <div className="p-2 space-y-2">
+            {sessions.map((session, index) => (
               <div
                 key={session.id}
-                className={`group relative w-full px-3 py-3 md:px-4 md:py-3 rounded-xl transition-all duration-200 ${
+                className={`group relative w-full px-4 py-3 rounded-xl transition-all duration-200 hover-lift animate-fade-in ${
                   selectedSessionId === session.id
-                    ? 'bg-gradient-to-r from-blue-100 to-purple-100 dark:from-blue-900/40 dark:to-purple-900/40 border border-blue-200/50 dark:border-blue-700/50 shadow-md'
-                    : 'hover:bg-gray-100/80 dark:hover:bg-gray-700/80 border border-transparent hover:border-gray-200/50 dark:hover:border-gray-600/50'
+                    ? 'bg-blue-500 dark:bg-blue-400 text-white shadow-soft'
+                    : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'
                 }`}
+                style={{ animationDelay: `${index * 0.05}s` }}
               >
                 <button
                   onClick={() => onSelectSession(session.id)}
                   className="w-full text-left"
                 >
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center space-x-3">
+                    <div className={`p-1.5 rounded-lg flex-shrink-0 ${
+                      selectedSessionId === session.id
+                        ? 'bg-white/20'
+                        : 'bg-blue-100/50 dark:bg-blue-900/30'
+                    }`}>
                     <svg
-                      className="w-4 h-4 flex-shrink-0"
+                        className="w-4 h-4"
                       fill="none"
-                      stroke="currentColor"
+                        stroke={selectedSessionId === session.id ? "currentColor" : "currentColor"}
                       viewBox="0 0 24 24"
                     >
                       <path
@@ -130,22 +142,29 @@ export function SidebarChatHistory({
                         d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
                       />
                     </svg>
-                    <span className={`truncate text-xs md:text-sm font-medium flex-1 ${
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className={`truncate block text-xs md:text-sm font-bold ${
                       selectedSessionId === session.id
-                        ? 'text-blue-900 dark:text-blue-100'
+                          ? 'text-white'
                         : 'text-gray-700 dark:text-gray-300'
                     }`}>
                       {session.title || 'New Chat'}
                     </span>
+                      <div className={`text-xs mt-1 font-medium ${
+                        selectedSessionId === session.id
+                          ? 'text-blue-100'
+                          : 'text-gray-500 dark:text-gray-400'
+                      }`}>
+                        {new Date(session.created_at).toLocaleDateString()}
+                      </div>
                   </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                    {new Date(session.created_at).toLocaleDateString()}
                   </div>
                 </button>
                 {onDeleteSession && (
                   <button
                     onClick={(e) => handleDelete(e, session.id)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-all duration-300 p-1.5 rounded-lg hover:bg-red-500/20 dark:hover:bg-red-500/30 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover-zoom"
                     title="Delete chat session"
                   >
                     <svg
@@ -170,10 +189,10 @@ export function SidebarChatHistory({
       </div>
       
       {sessions.length > 0 && onDeleteAll && (
-        <div className="p-3 md:p-4 border-t border-gray-200 dark:border-gray-700">
+        <div className="p-3 md:p-4 border-t border-gray-200/60 dark:border-gray-700/60">
           <button
             onClick={handleDeleteAllClick}
-            className="w-full px-4 py-3 md:px-5 md:py-3.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 dark:from-red-500 dark:to-red-600 dark:hover:from-red-600 dark:hover:to-red-700 text-white font-semibold rounded-xl transition-all duration-300 flex items-center justify-center space-x-2 text-sm md:text-base shadow-lg hover:shadow-xl hover-lift transform hover:scale-[1.02] active:scale-[0.98]"
+            className="w-full px-4 py-3 bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 text-white font-semibold rounded-xl transition-all duration-200 flex items-center justify-center space-x-2 text-sm md:text-base shadow-soft hover:shadow-medium hover-lift"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path

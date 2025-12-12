@@ -64,13 +64,13 @@ export function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <div className="h-full flex flex-col bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/30 dark:from-slate-900 dark:via-indigo-950/50 dark:to-slate-900 overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden relative">
       {/* Mobile header */}
-      <div className="md:hidden glass dark:glass-dark backdrop-blur-md bg-white/90 dark:bg-gray-800/90 border-b border-gray-200/50 dark:border-gray-700/50 px-4 py-3 flex items-center justify-between flex-shrink-0 z-30 shadow-lg">
-        <h1 className="text-lg font-semibold bg-gradient-to-r from-blue-600 to-purple-600 dark:from-blue-400 dark:to-purple-400 bg-clip-text text-transparent">Chat</h1>
+      <div className="md:hidden bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3 flex items-center justify-between flex-shrink-0 z-30">
+        <h1 className="text-xl font-semibold text-gray-900 dark:text-white">Chat</h1>
         <button
           onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="p-2 rounded-lg hover:bg-gray-100/50 dark:hover:bg-gray-700/50 transition-all duration-200 hover-lift"
+          className="p-2.5 rounded-xl glass dark:glass-dark hover-lift hover-zoom transition-all duration-300"
           aria-label="Toggle sidebar"
         >
           <svg className="w-6 h-6 text-gray-700 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -113,7 +113,7 @@ export function ChatPage() {
         {/* Mobile overlay */}
         {sidebarOpen && (
           <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+            className="fixed inset-0 bg-black/70 backdrop-blur-md z-40 md:hidden animate-fade-in"
             onClick={() => setSidebarOpen(false)}
           />
         )}

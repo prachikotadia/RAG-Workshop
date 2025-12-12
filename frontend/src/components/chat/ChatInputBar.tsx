@@ -1,4 +1,5 @@
 import { useState, FormEvent, KeyboardEvent } from 'react';
+import { Icon } from '../common/Icon';
 
 interface ChatInputBarProps {
   onSend: (message: string) => void;
@@ -42,7 +43,7 @@ export function ChatInputBar({
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
               rows={1}
-              className="w-full px-5 py-4 md:px-6 md:py-5 pr-16 md:pr-20 border-2 border-gray-300/80 dark:border-gray-600/80 rounded-2xl focus:outline-none focus:ring-4 focus:ring-blue-500/40 focus:border-blue-500 dark:focus:border-blue-400 dark:bg-gray-700/90 dark:text-white dark:placeholder-gray-400/80 resize-none transition-all duration-300 text-base md:text-lg shadow-xl hover:shadow-2xl hover:border-blue-400/80 dark:hover:border-blue-500/80 focus:shadow-2xl bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm hover-lift font-medium placeholder:text-gray-400 dark:placeholder:text-gray-500"
+              className="w-full px-5 py-4 md:px-6 md:py-5 pr-16 md:pr-20 border border-gray-300 dark:border-gray-600 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 dark:focus:border-blue-400 dark:bg-gray-800 dark:text-white dark:placeholder-gray-400 resize-none transition-all duration-200 text-base md:text-lg shadow-soft hover:shadow-medium bg-white dark:bg-gray-800 font-medium"
               disabled={disabled || isLoading}
               style={{ 
                 minHeight: '56px', 
@@ -51,7 +52,7 @@ export function ChatInputBar({
               }}
             />
             {inputValue.length > 0 && (
-              <div className="absolute right-5 md:right-6 bottom-4 md:bottom-5 text-xs text-gray-500 dark:text-gray-400 font-semibold bg-white/90 dark:bg-gray-800/90 px-2 py-1 rounded-md shadow-sm border border-gray-200/50 dark:border-gray-700/50">
+              <div className="absolute right-5 md:right-6 bottom-4 md:bottom-5 text-xs text-gray-500 dark:text-gray-400 font-medium bg-white dark:bg-gray-800 px-2 py-1 rounded border border-gray-200 dark:border-gray-700">
                 {inputValue.length}
               </div>
             )}
@@ -59,8 +60,9 @@ export function ChatInputBar({
           <button
             type="submit"
             disabled={!inputValue.trim() || disabled || isLoading}
-            className="px-5 py-4 md:px-7 md:py-5 bg-gradient-to-r from-blue-600 via-blue-500 to-purple-600 hover:from-blue-700 hover:via-blue-600 hover:to-purple-700 active:from-blue-800 active:to-purple-800 dark:from-blue-500 dark:via-blue-400 dark:to-purple-500 dark:hover:from-blue-600 dark:hover:via-blue-500 dark:hover:to-purple-600 dark:active:from-blue-700 dark:active:to-purple-700 text-white font-semibold rounded-2xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-xl hover:shadow-2xl hover:shadow-blue-500/60 disabled:shadow-md flex items-center justify-center space-x-2 text-base md:text-lg flex-shrink-0 min-w-[70px] md:min-w-[90px] hover-lift hover-glow transform hover:scale-105 active:scale-95 disabled:transform-none"
+            className="relative px-5 py-4 md:px-7 md:py-5 bg-gradient-to-r from-blue-600 via-blue-500 to-purple-600 hover:from-blue-700 hover:via-blue-600 hover:to-purple-700 active:from-blue-800 active:to-purple-800 dark:from-blue-500 dark:via-blue-400 dark:to-purple-500 dark:hover:from-blue-600 dark:hover:via-blue-500 dark:hover:to-purple-600 dark:active:from-blue-700 dark:active:to-purple-700 text-white font-bold rounded-3xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-colored hover:shadow-glow-accent disabled:shadow-soft flex items-center justify-center space-x-2 text-base md:text-lg flex-shrink-0 min-w-[70px] md:min-w-[90px] hover-lift hover-zoom-in transform hover:scale-110 active:scale-95 disabled:transform-none overflow-hidden group"
           >
+            <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
             {isLoading ? (
               <>
                 <svg className="animate-spin h-4 w-4 md:h-5 md:w-5" fill="none" viewBox="0 0 24 24">
@@ -82,14 +84,7 @@ export function ChatInputBar({
               </>
             ) : (
               <>
-                <svg className="w-4 h-4 md:w-5 md:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                  />
-                </svg>
+                <Icon name="arrow-right" size="sm" className="text-white" />
                 <span className="hidden sm:inline">Send</span>
               </>
             )}

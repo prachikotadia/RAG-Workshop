@@ -7,6 +7,7 @@ from sqlalchemy import (
     Enum,
     Text,
     JSON,
+    Boolean,
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -62,11 +63,20 @@ class Document(Base):
     original_filename = Column(String(255), nullable=False)
     status = Column(Enum(DocumentStatus), default=DocumentStatus.UPLOADING)
     num_chunks = Column(Integer, default=0)
+    # New optional columns - will be added via migration
+    # category_id = Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
+    # file_size = Column(Integer, nullable=True)  # File size in bytes
+    # file_type = Column(String(50), nullable=True)  # MIME type or file extension
+    # organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True, index=True)
+    # workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True)
+    # is_shared = Column(Boolean, default=False)  # Whether document is shared within organization
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User", back_populates="documents")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
+    # Tags and organization relationships removed to avoid errors if tables don't exist
+    # These will be added dynamically when tables are created
 
 
 class DocumentChunk(Base):

@@ -1,4 +1,3 @@
-import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -7,7 +6,7 @@ interface MarkdownContentProps {
   isUser?: boolean;
 }
 
-export function MarkdownContent({ content, isUser = false }: MarkdownContentProps) {
+export function MarkdownContent({ content }: MarkdownContentProps) {
   return (
     <div className="markdown-content">
       <ReactMarkdown

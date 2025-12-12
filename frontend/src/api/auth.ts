@@ -23,11 +23,13 @@ export interface TokenResponse {
 
 export const authApi = {
   login: async (email: string, password: string): Promise<TokenResponse> => {
-    return api.post<TokenResponse>('/auth/login', { email, password });
+    // Login should fail fast - no retries, 10 second timeout
+    return api.post<TokenResponse>('/auth/login', { email, password }, {}, false, 10000);
   },
 
   signup: async (email: string, password: string): Promise<User> => {
-    return api.post<User>('/auth/signup', { email, password });
+    // Signup should also fail fast - no retries, 10 second timeout
+    return api.post<User>('/auth/signup', { email, password }, {}, false, 10000);
   },
 
   getCurrentUser: async (): Promise<User> => {

@@ -3,7 +3,9 @@ import { App } from './App';
 import { AuthPage } from './pages/AuthPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { ChatPage } from './pages/ChatPage';
+import { AnalyticsPage } from './pages/AnalyticsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
+import { SharedConversationPage } from './pages/SharedConversationPage';
 
 export const router = createBrowserRouter([
   {
@@ -27,10 +29,18 @@ export const router = createBrowserRouter([
         element: <ChatPage />,
       },
       {
+        path: 'analytics',
+        element: <AnalyticsPage />,
+      },
+      {
         path: '*',
         element: <NotFoundPage />,
       },
     ],
+  },
+  {
+    path: '/shared/:token',
+    element: <SharedConversationPage />,
   },
 ]);
 

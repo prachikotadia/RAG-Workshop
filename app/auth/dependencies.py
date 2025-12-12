@@ -6,6 +6,7 @@ Phase 3 spec: get_current_user dependency that validates JWT and loads user.
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
+from typing import Optional
 from jose import JWTError
 from app.db.base import get_db
 from app.db import models
@@ -16,10 +17,45 @@ from app.config import get_settings
 settings = get_settings()
 
 # OAuth2 scheme for extracting Bearer token from Authorization header
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=True)
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 
-async def get_current_user(
+async def get_optional_user(
+    token: Optional[str] = Depends(oauth2_scheme_optional),
+    db: Session = Depends(get_db),
+) -> Optional[models.User]:
+    """
+    Get current user if authenticated, otherwise return None.
+    Useful for endpoints that work both with and without authentication.
+    """
+    if not token:
+        return None
+    
+    try:
+        # Decode token using the same logic as get_current_user
+        payload = decode_access_token(token)
+        token_data = TokenPayload(
+            sub=payload.get("sub"),
+            user_id=payload.get("user_id"),
+            exp=payload.get("exp")
+        )
+        
+        if token_data.sub is None:
+            return None
+        
+        # Query user by email (case-insensitive)
+        email_normalized = token_data.sub.lower().strip() if token_data.sub else None
+        if not email_normalized:
+            return None
+        
+        user = db.query(models.User).filter(models.User.email.ilike(email_normalized)).first()
+        return user
+    except (JWTError, Exception):
+        return None
+
+
+def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> models.User:

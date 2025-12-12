@@ -517,14 +517,28 @@ async def scan_image_comprehensively(image_path: Path, question: Optional[str] =
     """
     Perform a comprehensive scan of an image using REAL analysis.
     
-    Uses the proper fallback chain: OpenAI Vision → Local Captioning → Metadata.
+    Uses a multi-model approach combining:
+    1. OpenAI Vision API (if available) - for detailed analysis
+    2. BLIP captioning model (local) - for text descriptions and captions
+    3. CLIP embeddings - for image similarity search
+    4. Metadata fallback - as last resort
+    
+    BLIP and CLIP work together:
+    - BLIP: Generates text descriptions/captions (semantic understanding)
+    - CLIP: Generates image embeddings (512 dimensions) for similarity search
     
     Args:
         image_path: Path to the image file
         question: Optional specific question about the image
         
     Returns:
-        Dictionary with scan results
+        Dictionary with scan results including:
+        - scan_text: Full comprehensive scan text
+        - caption: BLIP-generated caption
+        - description: Detailed description
+        - clip_embedding: CLIP embedding vector (512 dimensions) for similarity search
+        - clip_embedding_dim: Dimension of CLIP embedding
+        - objects, colors, scene_type, mood, tags: Extracted metadata
     """
     try:
         clip = get_clip_provider()
@@ -532,13 +546,13 @@ async def scan_image_comprehensively(image_path: Path, question: Optional[str] =
         logger.info(f"Starting comprehensive image scan for {image_path}")
         
         # Add timeout wrapper for analyze_image
-        # Allow more time if local model is enabled (needs time to load/process)
+        # Allow enough time for OpenAI Vision API (can take 10-20 seconds)
         import asyncio
         from app.config import get_settings
         settings = get_settings()
         
-        # Faster timeout - fail fast to metadata fallback
-        timeout = 8.0  # Reduced from 30s/10s to 8s - prioritize speed
+        # Reasonable timeout - allow OpenAI Vision to complete properly
+        timeout = 35.0  # Increased to 35s to allow full OpenAI Vision processing
         
         try:
             analysis = await asyncio.wait_for(
@@ -550,19 +564,35 @@ async def scan_image_comprehensively(image_path: Path, question: Optional[str] =
             # Return minimal metadata fallback
             raise ValueError("Image analysis timed out, using metadata")
         
-        # Skip CLIP embedding generation for faster processing
-        # CLIP embeddings are not critical for basic image search
+        # Generate CLIP embedding for image similarity search
+        # CLIP embeddings enable image-to-image similarity search and complement BLIP text descriptions
         clip_embedding = None
         clip_embedding_dim = 0
-        logger.debug("Skipping CLIP embedding generation for faster processing")
+        try:
+            logger.info(f"Generating CLIP embedding for image similarity search: {image_path}")
+            clip_embedding = await asyncio.wait_for(
+                clip.embed_image(image_path),
+                timeout=10.0  # 10 second timeout for CLIP embedding generation
+            )
+            clip_embedding_dim = len(clip_embedding) if clip_embedding else 0
+            logger.info(f"✓ Generated CLIP embedding ({clip_embedding_dim} dimensions) for {image_path}")
+        except asyncio.TimeoutError:
+            logger.warning(f"CLIP embedding generation timed out for {image_path}, continuing without CLIP embedding")
+            clip_embedding = None
+            clip_embedding_dim = 0
+        except Exception as e:
+            logger.warning(f"CLIP embedding generation failed for {image_path}: {e}, continuing without CLIP embedding", exc_info=True)
+            clip_embedding = None
+            clip_embedding_dim = 0
         
-        # Build comprehensive scan text
-        full_scan_text = f"""=== REAL IMAGE ANALYSIS ===
+        # Build comprehensive scan text with both BLIP and CLIP information
+        clip_status = f"Generated ({clip_embedding_dim} dimensions)" if clip_embedding else "Not generated"
+        full_scan_text = f"""=== COMPREHENSIVE IMAGE SCAN ===
         
 Analysis Source: {analysis.get('analysis_source', 'Unknown')}
 Model Used: {analysis.get('model_used', 'N/A')}
         
-CAPTION:
+CAPTION (BLIP):
 {analysis.get('caption', 'N/A')}
         
 DETAILED DESCRIPTION:
@@ -580,7 +610,7 @@ MOOD/ATMOSPHERE: {', '.join(analysis.get('mood', [])) if analysis.get('mood') el
         
 TAGS: {', '.join(analysis.get('tags', [])) if analysis.get('tags') else 'None'}
         
-CLIP EMBEDDING: Generated ({clip_embedding_dim} dimensions) for similarity search"""
+CLIP EMBEDDING: {clip_status} for image similarity search"""
         
         logger.info(f"Comprehensive scan completed for {image_path}")
         
@@ -684,7 +714,8 @@ async def analyze_image(image_path: Path, question: Optional[str] = None) -> Dic
                 logger.info("Attempting OpenAI Vision API")
                 from app.rag.vision_analyzer import analyze_image_with_vision
                 
-                # Faster timeout for OpenAI Vision - fail fast if slow
+                # Reasonable timeout for OpenAI Vision - allow enough time for processing
+                # OpenAI Vision can take 10-20 seconds for complex images
                 vision_result = await asyncio.wait_for(
                     analyze_image_with_vision(
                         image_path=image_path,
@@ -692,7 +723,7 @@ async def analyze_image(image_path: Path, question: Optional[str] = None) -> Dic
                         api_key=settings.openai_api_key,
                         model=settings.llm_model if ("gpt-4" in settings.llm_model.lower() or "gpt-4o" in settings.llm_model.lower()) else "gpt-4o-mini"
                     ),
-                    timeout=8.0  # Reduced from 30s to 8s - fail fast
+                    timeout=30.0  # Increased to 30s to allow OpenAI to complete properly
                 )
                 
                 logger.info(f"OpenAI Vision API succeeded")
@@ -708,8 +739,9 @@ async def analyze_image(image_path: Path, question: Optional[str] = None) -> Dic
                     "model_used": vision_result.get("model_used", "gpt-4o-mini")
                 }
             except asyncio.TimeoutError:
-                logger.error("OpenAI Vision API timed out")
+                logger.warning("OpenAI Vision API timed out after 30 seconds")
                 openai_failed = True
+                should_fallback_to_local = True
             except Exception as e:
                 error_str = str(e).lower()
                 openai_failed = True
