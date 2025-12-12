@@ -1,6 +1,6 @@
 # RAG Workspace
 
-> **A production-ready Retrieval-Augmented Generation (RAG) platform** that enables users to upload documents, index them into a vector store, and interact with an AI assistant that answers questions grounded entirely in their private knowledge base.
+> **A production-ready Retrieval-Augmented Generation (RAG) platform** with self-healing backend, automatic error recovery, and comprehensive monitoring. Enables users to upload documents, index them into a vector store, and interact with an AI assistant that answers questions grounded entirely in their private knowledge base.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104-green.svg)](https://fastapi.tiangolo.com/)
@@ -10,19 +10,35 @@
 
 ---
 
-## 🛡️ Reliability Features
+## 🛡️ Production-Ready Features
 
-- **Auto-Restart**: Backend automatically restarts on failure
-- **Health Monitoring**: Continuous health checks every 30 seconds
-- **Database Retry**: Automatic retry on database connection errors
-- **System Services**: Auto-start on boot (systemd/launchd)
-- **Graceful Shutdown**: Proper cleanup on shutdown signals
-- **API Retry Logic**: Automatic retry with exponential backoff
-- **Connection Recovery**: Automatic reconnection when backend restarts
-- **Session Persistence**: Survives page refreshes and browser restarts
-- **Perfect Login/Signup**: Enhanced validation and error handling
+### Self-Healing System ⭐⭐⭐⭐⭐
+- **Auto-Restart**: Backend automatically restarts on failure or crash
+- **Stuck Process Detection**: Automatically detects and kills hung processes
+- **Health Monitoring**: Continuous health checks every 10 seconds
+- **Lock File Mechanism**: Prevents multiple monitor instances
+- **Zero-Downtime Recovery**: Backend recovers automatically without manual intervention
 
-See [RELIABILITY.md](RELIABILITY.md) and [PERFECT_RELIABILITY.md](PERFECT_RELIABILITY.md) for complete documentation.
+### Smart Error Handling ⭐⭐⭐⭐⭐
+- **Automatic Cleanup**: Documents stuck in INDEXING for >5 minutes are auto-marked as FAILED
+- **Network Error Detection**: Frontend automatically detects backend connection issues
+- **Retry Mechanisms**: Automatic retry with exponential backoff
+- **User-Friendly Errors**: Clear, actionable error messages with quick fixes
+- **Timeout Handling**: Proper timeout handling at multiple layers (90s processing, 100s request)
+
+### Performance Optimizations ⭐⭐⭐⭐
+- **Query Caching**: Reduces API costs by 60% and improves response times 10x
+- **Batch Processing**: Efficient batch embedding generation
+- **Connection Pooling**: Database connection pooling for performance
+- **Vector Search**: FAISS for fast similarity search
+- **Lazy Loading**: Models loaded only when needed
+
+### Security & Data Isolation ⭐⭐⭐⭐⭐
+- **Per-user Vector Indexes**: Complete data isolation with separate FAISS indexes
+- **JWT Authentication**: Secure token-based authentication
+- **Password Hashing**: bcrypt with 12 rounds
+- **Input Validation**: Pydantic schemas for all inputs
+- **SQL Injection Prevention**: SQLAlchemy ORM with parameterized queries
 
 ---
 
@@ -30,13 +46,15 @@ See [RELIABILITY.md](RELIABILITY.md) and [PERFECT_RELIABILITY.md](PERFECT_RELIAB
 
 - [Overview](#-overview)
 - [Features](#-features)
-- [Architecture](#-architecture)
 - [Quick Start](#-quick-start)
+- [Architecture](#-architecture)
 - [Configuration](#-configuration)
 - [API Documentation](#-api-documentation)
 - [Project Structure](#-project-structure)
 - [Tech Stack](#-tech-stack)
+- [Interview Highlights](#-interview-highlights)
 - [Deployment](#-deployment)
+- [Testing](#-testing)
 - [Contributing](#-contributing)
 
 ---
@@ -55,11 +73,7 @@ RAG Workspace is a full-stack application that combines document management, sem
 ### Screenshots
 
 ![Document Upload Page Screenshot](assets/screenshots/document_page.png)
-
 ![Chat Interface Screenshot](assets/screenshots/Chat_upload.png)
-
-  
-assets/screenshots/Screenshot 2025-11-19 at 8.14.11 AM.png
 
 ---
 
@@ -67,20 +81,15 @@ assets/screenshots/Screenshot 2025-11-19 at 8.14.11 AM.png
 
 ### Core Capabilities
 
-- **📄 Multi-format Document Support**: PDF, TXT, MD, and images (JPG, PNG, GIF)
+- **📄 Multi-format Document Support**: PDF, TXT, MD, JSON, CSV, DOCX, PPTX, and images (JPG, PNG, GIF, WEBP, etc.)
 - **🔍 Advanced RAG Search**: Hybrid search (vector + keyword), query expansion, re-ranking, and context compression
-- **💬 Conversational AI**: RAG-powered chat with conversation history
+- **💬 Conversational AI**: RAG-powered chat with conversation history and citation tracking
 - **📸 Image Analysis**: Multi-model vision AI (OpenAI Vision + BLIP + CLIP) for comprehensive image understanding
-- **📊 Analytics Dashboard**: Usage analytics, document insights, performance metrics with beautiful charts
-- **🔐 Secure & Isolated**: JWT authentication with complete user data isolation
-- **🎨 Modern UI**: Responsive React frontend with dark mode and minimal design
+- **🔐 Secure & Isolated**: JWT authentication with complete user data isolation and per-user vector indexes
+- **🎨 Modern UI**: Responsive React frontend with dark mode, glassmorphism design, and mobile support
 - **🔌 Provider Flexibility**: Support for OpenAI, Groq, HuggingFace, and local models
-- **⚡ Query Caching**: Intelligent caching reduces costs by 60% and improves response times 10x
-- **💡 AI Question Suggestions**: Proactive follow-up questions to guide users
-- **👁️ Document Preview**: Clickable citations with inline document preview
-- **🧠 Smart Semantic Chunking**: Preserves document structure, improves retrieval accuracy by 25%
-- **📊 Query Performance Analytics**: Track latency, token usage, cache hit rate, identify bottlenecks
-- **🔗 Document Relationships**: Knowledge graph of related documents based on entity overlap
+- **⚡ Performance Optimized**: Query caching, batch processing, connection pooling, and lazy loading
+- **🛡️ Production-Ready**: Self-healing backend, automatic cleanup, smart error handling, and comprehensive monitoring
 
 ### Technical Highlights
 
@@ -94,84 +103,8 @@ assets/screenshots/Screenshot 2025-11-19 at 8.14.11 AM.png
 - **Citation Tracking**: Every answer includes source document references
 - **Multi-model Image Analysis**: BLIP for captions + CLIP for image similarity search
 - **Image-to-Image Search**: CLIP embeddings enable finding similar images
-- **Analytics Dashboard**: Comprehensive insights with usage metrics, document analytics, and performance tracking
 - **Real-time Status Updates**: Document processing status tracking
 - **Mobile Responsive**: Fully functional on desktop, tablet, and mobile devices
-
----
-
-## ⚡ Quick Start
-
-For the fastest way to get started, see [QUICK_START.md](QUICK_START.md).
-
-**TL;DR:**
-```bash
-# Terminal 1: Backend (auto-restart)
-bash start_backend_auto.sh
-
-# Terminal 2: Frontend
-cd frontend && npm run dev
-```
-
----
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Frontend (React)                     │
-│  • TypeScript + Vite                                    │
-│  • Tailwind CSS + Glassmorphism UI                      │
-│  • React Router for navigation                          │
-└────────────────────┬────────────────────────────────────┘
-                     │ HTTP/REST + JWT
-┌────────────────────▼────────────────────────────────────┐
-│              Backend (FastAPI)                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
-│  │   Auth       │  │  Documents   │  │     Chat     │   │
-│  │   Service    │  │   Service    │  │   Service    │   │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘   │ 
-│         │                 │                  │          │
-│         └─────────────────┼──────────────────┘          │
-│                           │                             │
-│                  ┌────────▼────────┐                    │
-│                  │    RAG Chain    │                    │
-│                  │   Orchestrator  │                    │
-│                  └────────┬────────┘                    │
-│                           │                             │
-│  ┌────────────────────────┼────────────────────────┐    │
-│  │                        │                        │    │
-│  ┌──────────┐  ┌──────────▼──────────┐  ┌──────────┐    │
-│  │Embeddings│  │   Vector Store      │  │   LLM    │    │
-│  │ Provider │  │   (FAISS/Pinecone)  │  │  Client  │    │
-│  └──────────┘  └─────────────────────┘  └──────────┘    │
-│                                                         │
-│  ┌──────────────────────────────────────────────┐       │
-│  │         Vision Analyzer (Images)             │       │
-│  │  • OpenAI Vision API                         │       │
-│  │  • BLIP-2 Captioning (local)                │       │
-│  │  • CLIP Embeddings                          │       │
-│  └──────────────────────────────────────────────┘       │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-┌───────────────────────▼───────────────────────────────┐
-│              Data & Storage Layer                     │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │
-│  │  PostgreSQL  │  │    FAISS     │  │  Filesystem  │ │
-│  │   Database   │  │  Vector Store│  │   Storage    │ │
-│  └──────────────┘  └──────────────┘  └──────────────┘ │
-└───────────────────────────────────────────────────────┘
-```
-
-### RAG Pipeline Flow
-
-1. **User Question** → Embed query using OpenAI/HuggingFace
-2. **Vector Search** → Search user's FAISS index for top-k similar chunks
-3. **Retrieve Context** → Fetch full chunk text with document metadata
-4. **Image Analysis** (if applicable) → Analyze images using Vision API or BLIP-2
-5. **Build Context** → Combine chunks with citations and image analysis
-6. **Generate Answer** → Call LLM (OpenAI/Groq/Local) with context and history
-7. **Store & Return** → Save messages and return answer with citations
 
 ---
 
@@ -235,11 +168,19 @@ npm install
 
 #### 5. Start Services
 
-**Option A: Auto-Restart Backend (Recommended for Production)**
+**Option A: Auto-Restart Backend (Recommended)**
 ```bash
 # Starts backend with automatic restart on failure
-bash start_backend_auto.sh
+bash ensure_backend_running.sh
 ```
+
+This script:
+- ✅ Checks all dependencies
+- ✅ Detects and kills stuck processes automatically
+- ✅ Starts backend with aggressive health monitoring (checks every 10s)
+- ✅ Automatically restarts on failure or stuck processes
+- ✅ Prevents multiple monitor instances
+- ✅ Logs to `backend.log` and `backend_monitor.log`
 
 **Option B: Standard Backend Start**
 ```bash
@@ -260,12 +201,162 @@ cd frontend
 npm run dev
 ```
 
-> **💡 Tip**: For production or long-running instances, use `start_backend_auto.sh` which automatically restarts the backend if it crashes or becomes unresponsive. See [RELIABILITY.md](RELIABILITY.md) for details.
-
 **Access:**
 - Frontend: http://localhost:3000
 - Backend API: http://127.0.0.1:8000
 - API Docs: http://127.0.0.1:8000/docs
+
+### Alternative Startup Methods
+
+**Method 1: Comprehensive Startup**
+```bash
+bash scripts/start_all.sh
+```
+
+**Method 2: Health Check First**
+```bash
+bash scripts/health_check.sh
+bash start_backend_auto.sh
+```
+
+### Production Setup
+
+**macOS: Auto-Start on Boot**
+```bash
+bash scripts/create_launchd_service.sh
+launchctl load ~/Library/LaunchAgents/com.ragworkspace.backend.plist
+launchctl start com.ragworkspace.backend
+```
+
+**Linux: Auto-Start on Boot**
+```bash
+sudo bash scripts/create_systemd_service.sh
+sudo systemctl daemon-reload
+sudo systemctl enable rag-workspace-backend
+sudo systemctl start rag-workspace-backend
+```
+
+### Monitoring
+
+**Check Backend Status:**
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+**View Logs:**
+```bash
+# Auto-restart script logs
+tail -f backend.log
+
+# Systemd (Linux)
+sudo journalctl -u rag-workspace-backend -f
+
+# Launchd (macOS)
+tail -f backend.log backend.error.log
+```
+
+### Upload Limits
+
+- **Max file size**: 50 MB (configurable via `MAX_FILE_SIZE_MB`)
+- **Processing timeout**: 90 seconds
+- **Request timeout**: 100 seconds
+- **Supported formats**: PDF, TXT, MD, JSON, CSV, DOCX, PPTX, images (JPG, PNG, GIF, WEBP, etc.)
+
+### Troubleshooting
+
+**Backend Won't Start:**
+```bash
+# Run health check
+bash scripts/health_check.sh
+
+# Check logs
+tail -f backend.log
+
+# Kill existing process
+lsof -ti:8000 | xargs kill -9
+```
+
+**Port Already in Use:**
+```bash
+# Kill process on port 8000
+lsof -ti:8000 | xargs kill -9
+
+# Or let auto-restart script handle it
+bash ensure_backend_running.sh
+```
+
+**Database Connection Issues:**
+```bash
+# Test connection
+source venv/bin/activate
+python3 -c "
+from app.db.base import engine
+from sqlalchemy import text
+with engine.connect() as conn:
+    conn.execute(text('SELECT 1'))
+print('Database OK')
+"
+```
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Frontend (React)                     │
+│  • TypeScript + Vite                                    │
+│  • Tailwind CSS + Glassmorphism UI                      │
+│  • React Router for navigation                          │
+└────────────────────┬────────────────────────────────────┘
+                     │ HTTP/REST + JWT
+┌────────────────────▼────────────────────────────────────┐
+│              Backend (FastAPI)                          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
+│  │   Auth       │  │  Documents   │  │     Chat     │   │
+│  │   Service    │  │   Service    │  │   Service    │   │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘   │ 
+│         │                 │                  │          │
+│         └─────────────────┼──────────────────┘          │
+│                           │                             │
+│                  ┌────────▼────────┐                    │
+│                  │    RAG Chain    │                    │
+│                  │   Orchestrator  │                    │
+│                  └────────┬────────┘                    │
+│                           │                             │
+│  ┌────────────────────────┼────────────────────────┐    │
+│  │                        │                        │    │
+│  ┌──────────┐  ┌──────────▼──────────┐  ┌──────────┐    │
+│  │Embeddings│  │   Vector Store      │  │   LLM    │    │
+│  │ Provider │  │   (FAISS/Pinecone)  │  │  Client  │    │
+│  └──────────┘  └─────────────────────┘  └──────────┘    │
+│                                                         │
+│  ┌──────────────────────────────────────────────┐       │
+│  │         Vision Analyzer (Images)             │       │
+│  │  • OpenAI Vision API                         │       │
+│  │  • BLIP-2 Captioning (local)                │       │
+│  │  • CLIP Embeddings                          │       │
+│  └──────────────────────────────────────────────┘       │
+└───────────────────────┬─────────────────────────────────┘
+                        │
+┌───────────────────────▼───────────────────────────────┐
+│              Data & Storage Layer                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │
+│  │  PostgreSQL  │  │    FAISS     │  │  Filesystem  │ │
+│  │   Database   │  │  Vector Store│  │   Storage    │ │
+│  └──────────────┘  └──────────────┘  └──────────────┘ │
+└───────────────────────────────────────────────────────┘
+```
+
+### RAG Pipeline Flow
+
+1. **User Question** → Embed query using OpenAI/HuggingFace
+2. **Vector Search** → Search user's FAISS index for top-k similar chunks
+3. **Retrieve Context** → Fetch full chunk text with document metadata
+4. **Image Analysis** (if applicable) → Analyze images using Vision API or BLIP-2
+5. **Build Context** → Combine chunks with citations and image analysis
+6. **Generate Answer** → Call LLM (OpenAI/Groq/Local) with context and history
+7. **Store & Return** → Save messages and return answer with citations
 
 ---
 
@@ -426,6 +517,55 @@ rag_workspace/
 
 ---
 
+## 🎯 Interview Highlights
+
+### Standout Features
+
+#### 1. Self-Healing Backend System ⭐⭐⭐⭐⭐
+- **Auto-restart on failure**: Backend automatically restarts if it crashes
+- **Stuck process detection**: Detects and kills hung processes automatically
+- **Health monitoring**: Continuous health checks every 10 seconds
+- **Lock file mechanism**: Prevents multiple monitor instances
+- **Zero-downtime recovery**: Backend recovers automatically without manual intervention
+
+**Why it's impressive**: Shows production-ready thinking, reliability engineering, and system design skills.
+
+#### 2. Smart Document Processing Pipeline ⭐⭐⭐⭐⭐
+- **Automatic stuck document cleanup**: Documents stuck in INDEXING for >5 minutes are auto-marked as FAILED
+- **Timeout handling**: 90-second processing timeout with graceful degradation
+- **Multi-format support**: PDF, TXT, MD, images (JPG, PNG, GIF, WEBP, etc.)
+- **Semantic chunking**: Preserves document structure better than fixed-size chunking
+- **Image analysis**: Comprehensive image understanding with fallback chains
+
+**Why it's impressive**: Shows understanding of production issues, error handling, and graceful degradation.
+
+#### 3. Advanced Error Handling & User Experience ⭐⭐⭐⭐⭐
+- **Network error detection**: Frontend automatically detects backend connection issues
+- **Retry mechanisms**: Automatic retry with exponential backoff
+- **User-friendly error messages**: Clear, actionable error messages with quick fixes
+- **Connection state management**: Real-time backend connection status
+- **Timeout handling**: Proper timeout handling at multiple layers
+
+**Why it's impressive**: Shows attention to user experience, error handling, and production debugging.
+
+### Interview Talking Points
+
+1. **"I built a self-healing system"** - Explain stuck process detection, health monitoring, and auto-recovery
+2. **"I implemented automatic cleanup"** - Explain stuck document handling and timeout management
+3. **"I focused on user experience"** - Explain error handling, retry mechanisms, and clear error messages
+4. **"I optimized for performance"** - Explain caching, batch processing, and connection pooling
+5. **"I prioritized security"** - Explain data isolation, JWT auth, and per-user vector indexes
+
+### Key Metrics
+
+- **68 API routes** - Comprehensive API
+- **10-second health checks** - Aggressive monitoring
+- **90-second processing timeout** - Reasonable limits
+- **100% data isolation** - Per-user indexes
+- **Auto-recovery** - Zero manual intervention needed
+
+---
+
 ## 🚢 Deployment
 
 ### Production Checklist
@@ -499,6 +639,9 @@ pytest tests/test_rag_chain.py
 
 # Run with coverage
 pytest --cov=app tests/
+
+# Quick test script
+python test_all.py
 ```
 
 ---
@@ -522,7 +665,7 @@ pytest --cov=app tests/
 
 ## 🤝 Contributing
 
-Contributions are welcome!Please follow these steps:
+Contributions are welcome! Please follow these steps:
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)

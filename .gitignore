@@ -58,8 +58,7 @@ data/
 .DS_Store
 Thumbs.db
 
-# Test files
-test_all.py
+# Test files (keep test_all.py as it's useful)
 check_server.py
 
 # Frontend build

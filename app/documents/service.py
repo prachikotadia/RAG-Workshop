@@ -15,8 +15,6 @@ from app.documents.parsers import extract_text_from_file
 from app.documents.chunking import chunk_text
 from app.documents.semantic_chunking import semantic_chunk_text
 from app.embeddings.provider import EmbeddingsProvider
-from app.embeddings.image_provider import CLIPImageEmbeddingsProvider
-from app.rag.image_analyzer import get_blip2_analyzer
 from app.vectorstore.faiss_store import VectorStore
 
 logger = logging.getLogger(__name__)
